@@ -211,7 +211,7 @@ TOKEN_DEFINITIONS = {
             "BEP20": {
                 "label": "BEP20",
                 "addresses": [
-                    "0xDA4c2a5B876b0c7521e1c752690D8705080000fE",  # Original
+                    "0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08",  # Original
                     "0xf282e789e835ed379aea84ece204d2d643e6774f"   # New
                 ]
             },
@@ -233,11 +233,11 @@ TOKEN_DEFINITIONS = {
             },
             "POLYGON": {
                 "label": "Polygon",
-                "addresses": ["0xDA4c2a5B876b0c7521e1c752690D8705080000fE"]
+                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]
             },
             "OPTIMISM": {
                 "label": "Optimism",
-                "addresses": ["0xDA4c2a5B876b0c7521e1c752690D8705080000fE"]
+                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]
             }
         }
     },
@@ -246,7 +246,7 @@ TOKEN_DEFINITIONS = {
         "networks": {
             "BEP20": {
                 "label": "BEP20",
-                "addresses": ["0xDA4c2a5B876b0c7521e1c752690D8705080000fE"]
+                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]
             }
         }
     },
@@ -276,11 +276,11 @@ TOKEN_DEFINITIONS = {
         "networks": {
             "ETH": {
                 "label": "Ethereum",
-                "addresses": ["0xDA4c2a5B876b0c7521e1c752690D8705080000fE"]
+                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]
             },
             "BEP20": {
                 "label": "BEP20",
-                "addresses": ["0xDA4c2a5B876b0c7521e1c752690D8705080000fE"]
+                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]
             }
         }
     },
