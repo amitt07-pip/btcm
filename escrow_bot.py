@@ -201,7 +201,7 @@ TOKEN_DEFINITIONS = {
         "networks": {
             "DOGE": {
                 "label": "Dogecoin",
-                "addresses": ["D8j5et7K4m4tt6TCkovr2n5Ruyb3mYUeFA"]
+                "addresses": ["D7N5QG5p56pghxHUcKEPWRzmsvnrMtDZD1"]
             }
         }
     },
