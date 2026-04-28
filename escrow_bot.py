@@ -283,7 +283,7 @@ TOKEN_DEFINITIONS = {
             "BTC": {
                 "label": "Bitcoin",
                 "addresses": [
-                    "bc1qya2u04hfdy5j9mnzds7effh0xqx3mvwcyflnak",  # Original
+                    "bc1qak4axkk5qw6046p7yl9qxlvtuqq6dm74557ewn",  # Original
                     "bc1q43nwc38ashvvzhakw7ma7227yzd3yfkmpudl48"   # New
                 ]
             }
