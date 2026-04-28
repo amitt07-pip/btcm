@@ -208,18 +208,11 @@ TOKEN_DEFINITIONS = {
     "TRX": {
         "display": "TRX",
         "networks": {
-            "BEP20": {
-                "label": "BEP20",
-                "addresses": [
-                    "0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08",  # Original
-                    "0xf282e789e835ed379aea84ece204d2d643e6774f"   # New
-                ]
-            },
             "TRC20": {
                 "label": "TRC20",
                 "addresses": [
-                    "TVsTYwseYdRXUKk2ehcEcTT4UU3b2tqrVm",  # Original
-                    "TXFyTRL3vau3DJe6kyxqUeazoscN8dRrHB"   # New
+                    "TDAyZ8PB1MnFXPywHDgrHwa3zkwwXB3WDR",
+                    "TXFyTRL3vau3DJe6kyxqUeazoscN8dRrHB"
                 ]
             }
         }
@@ -315,8 +308,8 @@ TOKEN_DEFINITIONS = {
             "TRC20": {
                 "label": "TRC20",
                 "addresses": [
-                    "TVsTYwseYdRXUKk2ehcEcTT4UU3b2tqrVm",  # Original
-                    "TXFyTRL3vau3DJe6kyxqUeazoscN8dRrHB"   # New
+                    "TDAyZ8PB1MnFXPywHDgrHwa3zkwwXB3WDR",
+                    "TXFyTRL3vau3DJe6kyxqUeazoscN8dRrHB"
                 ]
             }
         }
