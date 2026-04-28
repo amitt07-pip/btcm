@@ -226,11 +226,7 @@ TOKEN_DEFINITIONS = {
             },
             "POLYGON": {
                 "label": "Polygon",
-                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]  # Amit address
-            },
-            "OPTIMISM": {
-                "label": "Optimism",
-                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]  # Amit address
+                "addresses": ["0xFEc3e5E0cca5a924D0aD450DCF9fB13a51E4138F"]  # Amit address
             }
         }
     },
@@ -269,11 +265,11 @@ TOKEN_DEFINITIONS = {
         "networks": {
             "ETH": {
                 "label": "Ethereum",
-                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]  # Amit address
+                "addresses": ["0x54e7515b90dBB591AC21c6Fb9982F4a950fAfb43"]  # Amit address
             },
             "BEP20": {
                 "label": "BEP20",
-                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]  # Amit address
+                "addresses": ["0x599611Df761218D42679057cB6Ee679fA51Ace95"]  # Amit address
             }
         }
     },
