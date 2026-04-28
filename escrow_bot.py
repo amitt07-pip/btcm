@@ -527,7 +527,7 @@ async def escrow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from telethon.tl.functions.messages import ExportChatInviteRequest, UpdatePinnedMessageRequest
     from telethon.tl.types import ChatAdminRights
     
-    waiting_msg = await update.message.reply_text("**Creating a safe trading place for you please wait, please wait...**", parse_mode='Markdown')
+    waiting_msg = await update.message.reply_text("<b>Creating a safe trading place for you please wait, please wait...</b>", parse_mode='HTML')
     
     if not user_client:
         error_msg = "❌ Group creation is not configured. Please contact the bot administrator."
@@ -559,9 +559,40 @@ async def escrow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         channel = result.chats[0]
         channel_id = channel.id
         
-        # Small delay to ensure group is fully created
-        await asyncio.sleep(2)
+        # Generate invite link immediately so user gets it fast
+        invite_result = await user_client(ExportChatInviteRequest(
+            peer=channel_id,
+            usage_limit=2
+        ))
+        invite_link = invite_result.link
+        print(f"✅ Invite link created and copied by user API: {invite_link}")
         
+        # Get user's full name
+        user_full_name = user.first_name
+        if user.last_name:
+            user_full_name += f" {user.last_name}"
+        
+        # Store the transaction ID
+        bot_chat_id = int(f"-100{channel_id}")
+        if bot_chat_id not in escrow_roles:
+            escrow_roles[bot_chat_id] = {}
+        escrow_roles[bot_chat_id]['transaction_id'] = random_number
+        
+        # ===== Send the link to user ASAP =====
+        success_message = f"""<b><u>Escrow Group Created</u></b>
+
+<b>Creator: {user_full_name}</b>
+
+<b>Join this escrow group and share the link with the buyer and seller.</b>
+
+<b>{invite_link}</b>
+
+<blockquote>⚠️ Note: This link is for 2 members only—third parties are not allowed to join.</blockquote>"""
+        
+        await waiting_msg.edit_text(success_message, parse_mode='HTML')
+        print(f"✅ Link posted to user by bot token")
+        
+        # ===== Now do admin setup in background =====
         # Get bot entity
         bot_username = (await context.bot.get_me()).username
         bot_entity = await user_client.get_entity(bot_username)
@@ -571,15 +602,6 @@ async def escrow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             channel=channel_id,
             users=[bot_entity]
         ))
-        
-        # Store the transaction ID
-        bot_chat_id = int(f"-100{channel_id}")
-        if bot_chat_id not in escrow_roles:
-            escrow_roles[bot_chat_id] = {}
-        escrow_roles[bot_chat_id]['transaction_id'] = random_number
-        
-        # Small delay before promoting
-        await asyncio.sleep(1)
         
         # Promote bot to admin with full permissions
         admin_rights = ChatAdminRights(
@@ -600,7 +622,7 @@ async def escrow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rank="Admin"
         ))
         
-        # Promote user as anonymous admin
+        # Promote userbot as anonymous admin
         me = await user_client.get_me()
         anon_rights = ChatAdminRights(
             change_info=True,
@@ -617,20 +639,7 @@ async def escrow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rank="Admin"
         ))
         
-        # Wait for admin permissions to propagate
-        await asyncio.sleep(2)
-        
-        # ===== STEP 1: Telethon User API - Create and Get Invite Link =====
-        # Generate invite link with member limit of 2 using Telethon
-        invite_result = await user_client(ExportChatInviteRequest(
-            peer=channel_id,
-            usage_limit=2
-        ))
-        # Store the copied link
-        invite_link = invite_result.link
-        print(f"✅ Invite link created and copied by user API: {invite_link}")
-        
-        # Send welcome message
+        # Send and pin welcome message
         welcome_text = """<b>📍 Hey there traders! Welcome to our escrow service.
 ⚠️ IMPORTANT - Make sure coin and network is same of Buyer and Seller else you may loose your coin.
 ⚠️ IMPORTANT - Make sure the /buyer address and /seller address are of same chain else you may loose your coin.
@@ -644,33 +653,11 @@ async def escrow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='html'
         )
         
-        # Pin the welcome message
         await user_client(UpdatePinnedMessageRequest(
             peer=channel_id,
             id=sent_message.id,
             silent=True
         ))
-        
-        # Get user's full name
-        user_full_name = user.first_name
-        if user.last_name:
-            user_full_name += f" {user.last_name}"
-        
-        # ===== STEP 2: Bot Token - Receive Copied Link and Post to User =====
-        # Build success message using the copied invite link from Telethon
-        success_message = f"""<b><u>Escrow Group Created</u></b>
-
-<b>Creator: {user_full_name}</b>
-
-<b>Join this escrow group and share the link with the buyer and seller.</b>
-
-<b>{invite_link}</b>
-
-<blockquote>⚠️ Note: This link is for 2 members only—third parties are not allowed to join.</blockquote>"""
-        
-        # Bot token posts the message with the copied link
-        await waiting_msg.edit_text(success_message, parse_mode='HTML')
-        print(f"✅ Link posted to user by bot token")
         
     except FloodWaitError as e:
         await waiting_msg.edit_text(f"⏳ Rate limit hit. Please wait {e.seconds} seconds and try again.")
