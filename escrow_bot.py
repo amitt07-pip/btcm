@@ -623,20 +623,6 @@ async def escrow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             silent=True
         ))
         
-        # Leave the group
-        await user_client(LeaveChannelRequest(channel=channel_id))
-        
-        # Small delay
-        await asyncio.sleep(1)
-        
-        # Delete service messages (join/leave notifications)
-        try:
-            async for message in user_client.iter_messages(channel_id, limit=10):
-                if message.action:
-                    await user_client.delete_messages(channel_id, [message.id])
-        except:
-            pass
-        
         # Get user's full name
         user_full_name = user.first_name
         if user.last_name:
