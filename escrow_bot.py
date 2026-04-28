@@ -2958,7 +2958,7 @@ async def verify_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Get buyer details and check availability
             buyer_name = "N/A"
             buyer_userid = "N/A"
-            buyer_available = "No ❌"
+            buyer_available = "No"
             if buyer_info:
                 buyer_userid = buyer_info['user_id']
                 try:
@@ -2966,17 +2966,17 @@ async def verify_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     buyer_first_name = member.user.first_name or "Unknown"
                     buyer_name = f'<a href="tg://user?id={buyer_userid}">{buyer_first_name}</a>'
                     if member.status in ['member', 'administrator', 'creator']:
-                        buyer_available = "Yes ✅"
+                        buyer_available = "Yes"
                     else:
-                        buyer_available = "No ❌"
+                        buyer_available = "No"
                 except Exception:
                     buyer_name = buyer_info.get('username', 'Unknown')
-                    buyer_available = "No ❌"
+                    buyer_available = "No"
             
             # Get seller details and check availability
             seller_name = "N/A"
             seller_userid = "N/A"
-            seller_available = "No ❌"
+            seller_available = "No"
             if seller_info:
                 seller_userid = seller_info['user_id']
                 try:
@@ -2984,12 +2984,12 @@ async def verify_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     seller_first_name = member.user.first_name or "Unknown"
                     seller_name = f'<a href="tg://user?id={seller_userid}">{seller_first_name}</a>'
                     if member.status in ['member', 'administrator', 'creator']:
-                        seller_available = "Yes ✅"
+                        seller_available = "Yes"
                     else:
-                        seller_available = "No ❌"
+                        seller_available = "No"
                 except Exception:
                     seller_name = seller_info.get('username', 'Unknown')
-                    seller_available = "No ❌"
+                    seller_available = "No"
             
             verify_message = (
                 f"<b>Address belongs to this chat's deal: {belongs_to_this_chat}</b>\n\n"
