@@ -2912,13 +2912,106 @@ async def verify_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             break
     
     if is_bot_address:
-        await update.message.reply_text(
-            "<b>The provided address is valid and belong to bot.</b>",
-            parse_mode='HTML'
-        )
+        provided_address = address_to_check
+        
+        # Find which deal this address is assigned to
+        deal_chat_id = None
+        
+        # Strategy 1: Check if the user who sent the command is buyer/seller in any deal
+        user_id = update.effective_user.id
+        for cid, roles in escrow_roles.items():
+            buyer = roles.get('buyer')
+            seller = roles.get('seller')
+            if buyer and buyer.get('user_id') == user_id:
+                if roles.get('escrow_address', '').lower() == provided_address.lower():
+                    deal_chat_id = cid
+                    break
+            if seller and seller.get('user_id') == user_id:
+                if roles.get('escrow_address', '').lower() == provided_address.lower():
+                    deal_chat_id = cid
+                    break
+        
+        # Strategy 2: Search all escrow_roles for matching escrow_address
+        if not deal_chat_id:
+            for cid, roles in escrow_roles.items():
+                if roles.get('escrow_address', '').lower() == provided_address.lower():
+                    deal_chat_id = cid
+                    break
+        
+        # Strategy 3: Check monitored_addresses
+        if not deal_chat_id:
+            for addr, info in monitored_addresses.items():
+                if addr.lower() == provided_address.lower():
+                    deal_chat_id = info.get('chat_id')
+                    break
+        
+        if deal_chat_id and deal_chat_id in escrow_roles:
+            roles = escrow_roles[deal_chat_id]
+            buyer_info = roles.get('buyer')
+            seller_info = roles.get('seller')
+            transaction_id = roles.get('transaction_id', 'N/A')
+            
+            # Check if command was sent in the deal's escrow group
+            current_chat_id = update.effective_chat.id
+            belongs_to_this_chat = "Yes ✅" if current_chat_id == deal_chat_id else "No ❌"
+            
+            # Get buyer details and check availability
+            buyer_name = "N/A"
+            buyer_userid = "N/A"
+            buyer_available = "No ❌"
+            if buyer_info:
+                buyer_userid = buyer_info['user_id']
+                try:
+                    member = await context.bot.get_chat_member(chat_id=deal_chat_id, user_id=buyer_userid)
+                    buyer_first_name = member.user.first_name or "Unknown"
+                    buyer_name = f'<a href="tg://user?id={buyer_userid}">{buyer_first_name}</a>'
+                    if member.status in ['member', 'administrator', 'creator']:
+                        buyer_available = "Yes ✅"
+                    else:
+                        buyer_available = "No ❌"
+                except Exception:
+                    buyer_name = buyer_info.get('username', 'Unknown')
+                    buyer_available = "No ❌"
+            
+            # Get seller details and check availability
+            seller_name = "N/A"
+            seller_userid = "N/A"
+            seller_available = "No ❌"
+            if seller_info:
+                seller_userid = seller_info['user_id']
+                try:
+                    member = await context.bot.get_chat_member(chat_id=deal_chat_id, user_id=seller_userid)
+                    seller_first_name = member.user.first_name or "Unknown"
+                    seller_name = f'<a href="tg://user?id={seller_userid}">{seller_first_name}</a>'
+                    if member.status in ['member', 'administrator', 'creator']:
+                        seller_available = "Yes ✅"
+                    else:
+                        seller_available = "No ❌"
+                except Exception:
+                    seller_name = seller_info.get('username', 'Unknown')
+                    seller_available = "No ❌"
+            
+            verify_message = (
+                f"<b>Address belongs to this chat's deal: {belongs_to_this_chat}</b>\n\n"
+                f"<b>The provided address is valid and belong to bot.</b>\n\n"
+                f"<b>Currently Assigned Deal: {transaction_id}</b>\n"
+                f"<b>Buyer: {buyer_name}({buyer_userid})</b>\n"
+                f"<b>Seller: {seller_name}({seller_userid})</b>\n"
+                f"<b>Buyer Available in Deal Chat: {buyer_available}</b>\n"
+                f"<b>Seller Available in Deal Chat: {seller_available}</b>"
+            )
+            
+            await update.message.reply_text(verify_message, parse_mode='HTML')
+        else:
+            # Address belongs to bot but no active deal found for it
+            await update.message.reply_text(
+                "<b>The provided address is valid and belong to bot.</b>\n\n"
+                "<b>No active deal is currently assigned to this address.</b>",
+                parse_mode='HTML'
+            )
     else:
         await update.message.reply_text(
-            "<b>The provided address is not valid and doesn't belong to bot.</b>",
+            "<b>The provided adress is invalid and doesn't belongs to bot.</b>",
             parse_mode='HTML'
         )
 
