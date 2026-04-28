@@ -249,7 +249,7 @@ TOKEN_DEFINITIONS = {
             "LTC": {
                 "label": "Litecoin",
                 "addresses": [
-                    "ltc1qya2u04hfdy5j9mnzds7effh0xqx3mvwcq49h9x",  # Original
+                    "LRPJK6HbLvkFsYdqB953yqrUZYDUVdzGFL",  # Original
                     "ltc1qfu7asf36pmg5kc4wge5dcz6t5yd3pyn3d86w66"   # New
                 ]
             }
