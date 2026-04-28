@@ -559,40 +559,6 @@ async def escrow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         channel = result.chats[0]
         channel_id = channel.id
         
-        # Generate invite link immediately so user gets it fast
-        invite_result = await user_client(ExportChatInviteRequest(
-            peer=channel_id,
-            usage_limit=2
-        ))
-        invite_link = invite_result.link
-        print(f"✅ Invite link created and copied by user API: {invite_link}")
-        
-        # Get user's full name
-        user_full_name = user.first_name
-        if user.last_name:
-            user_full_name += f" {user.last_name}"
-        
-        # Store the transaction ID
-        bot_chat_id = int(f"-100{channel_id}")
-        if bot_chat_id not in escrow_roles:
-            escrow_roles[bot_chat_id] = {}
-        escrow_roles[bot_chat_id]['transaction_id'] = random_number
-        
-        # ===== Send the link to user ASAP =====
-        success_message = f"""<b><u>Escrow Group Created</u></b>
-
-<b>Creator: {user_full_name}</b>
-
-<b>Join this escrow group and share the link with the buyer and seller.</b>
-
-<b>{invite_link}</b>
-
-<blockquote>⚠️ Note: This link is for 2 members only—third parties are not allowed to join.</blockquote>"""
-        
-        await waiting_msg.edit_text(success_message, parse_mode='HTML')
-        print(f"✅ Link posted to user by bot token")
-        
-        # ===== Now do admin setup in background =====
         # Get bot entity
         bot_username = (await context.bot.get_me()).username
         bot_entity = await user_client.get_entity(bot_username)
@@ -638,6 +604,39 @@ async def escrow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             admin_rights=anon_rights,
             rank="Admin"
         ))
+        
+        # Generate invite link after userbot is promoted to admin
+        invite_result = await user_client(ExportChatInviteRequest(
+            peer=channel_id,
+            usage_limit=2
+        ))
+        invite_link = invite_result.link
+        print(f"✅ Invite link created: {invite_link}")
+        
+        # Store the transaction ID
+        bot_chat_id = int(f"-100{channel_id}")
+        if bot_chat_id not in escrow_roles:
+            escrow_roles[bot_chat_id] = {}
+        escrow_roles[bot_chat_id]['transaction_id'] = random_number
+        
+        # Get user's full name
+        user_full_name = user.first_name
+        if user.last_name:
+            user_full_name += f" {user.last_name}"
+        
+        # Send the link to user
+        success_message = f"""<b><u>Escrow Group Created</u></b>
+
+<b>Creator: {user_full_name}</b>
+
+<b>Join this escrow group and share the link with the buyer and seller.</b>
+
+<b>{invite_link}</b>
+
+<blockquote>⚠️ Note: This link is for 2 members only—third parties are not allowed to join.</blockquote>"""
+        
+        await waiting_msg.edit_text(success_message, parse_mode='HTML')
+        print(f"✅ Link posted to user by bot token")
         
         # Send and pin welcome message
         welcome_text = """<b>📍 Hey there traders! Welcome to our escrow service.
