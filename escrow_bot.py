@@ -631,6 +631,14 @@ async def escrow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             silent=True
         ))
         
+        # Delete service messages (e.g. "created group", "invited user")
+        try:
+            async for message in user_client.iter_messages(channel_id, limit=20):
+                if message.action:
+                    await user_client.delete_messages(channel_id, [message.id])
+        except Exception as e:
+            print(f"⚠️ Failed to delete service messages: {e}")
+        
         # Generate invite link after welcome message is sent
         invite_result = await user_client(ExportChatInviteRequest(
             peer=channel_id,
