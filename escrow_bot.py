@@ -201,7 +201,7 @@ TOKEN_DEFINITIONS = {
         "networks": {
             "DOGE": {
                 "label": "Dogecoin",
-                "addresses": ["D7N5QG5p56pghxHUcKEPWRzmsvnrMtDZD1"]
+                "addresses": ["D7N5QG5p56pghxHUcKEPWRzmsvnrMtDZD1"]  # Amit address
             }
         }
     },
@@ -211,7 +211,7 @@ TOKEN_DEFINITIONS = {
             "TRC20": {
                 "label": "TRC20",
                 "addresses": [
-                    "TDAyZ8PB1MnFXPywHDgrHwa3zkwwXB3WDR",
+                    "TDAyZ8PB1MnFXPywHDgrHwa3zkwwXB3WDR",  # Amit address
                     "TXFyTRL3vau3DJe6kyxqUeazoscN8dRrHB"
                 ]
             }
@@ -222,15 +222,15 @@ TOKEN_DEFINITIONS = {
         "networks": {
             "BEP20": {
                 "label": "BEP20",
-                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]
+                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]  # Amit address
             },
             "POLYGON": {
                 "label": "Polygon",
-                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]
+                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]  # Amit address
             },
             "OPTIMISM": {
                 "label": "Optimism",
-                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]
+                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]  # Amit address
             }
         }
     },
@@ -239,7 +239,7 @@ TOKEN_DEFINITIONS = {
         "networks": {
             "BEP20": {
                 "label": "BEP20",
-                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]
+                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]  # Amit address
             }
         }
     },
@@ -249,7 +249,7 @@ TOKEN_DEFINITIONS = {
             "LTC": {
                 "label": "Litecoin",
                 "addresses": [
-                    "LRPJK6HbLvkFsYdqB953yqrUZYDUVdzGFL",  # Original
+                    "LRPJK6HbLvkFsYdqB953yqrUZYDUVdzGFL",  # Amit address
                     "ltc1qfu7asf36pmg5kc4wge5dcz6t5yd3pyn3d86w66"   # New
                 ]
             }
@@ -260,7 +260,7 @@ TOKEN_DEFINITIONS = {
         "networks": {
             "SOL": {
                 "label": "Solana",
-                "addresses": ["HmqfCsepGq8KNBLKZ2jSyLNsiKYjQK8mpYEmjkQi9weE"]
+                "addresses": ["HmqfCsepGq8KNBLKZ2jSyLNsiKYjQK8mpYEmjkQi9weE"]  # Amit address
             }
         }
     },
@@ -269,11 +269,11 @@ TOKEN_DEFINITIONS = {
         "networks": {
             "ETH": {
                 "label": "Ethereum",
-                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]
+                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]  # Amit address
             },
             "BEP20": {
                 "label": "BEP20",
-                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]
+                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]  # Amit address
             }
         }
     },
@@ -283,7 +283,7 @@ TOKEN_DEFINITIONS = {
             "BTC": {
                 "label": "Bitcoin",
                 "addresses": [
-                    "bc1qak4axkk5qw6046p7yl9qxlvtuqq6dm74557ewn",  # Original
+                    "bc1qak4axkk5qw6046p7yl9qxlvtuqq6dm74557ewn",  # Amit address
                     "bc1q43nwc38ashvvzhakw7ma7227yzd3yfkmpudl48"   # New
                 ]
             }
@@ -294,7 +294,7 @@ TOKEN_DEFINITIONS = {
         "networks": {
             "BEP20": {
                 "label": "BEP20",
-                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]
+                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]  # Amit address
             }
         }
     },
@@ -303,12 +303,12 @@ TOKEN_DEFINITIONS = {
         "networks": {
             "BEP20": {
                 "label": "BEP20",
-                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]
+                "addresses": ["0xa3D0e7da537057cbeC62A48235FbEc8BB38B4E08"]  # Amit address
             },
             "TRC20": {
                 "label": "TRC20",
                 "addresses": [
-                    "TDAyZ8PB1MnFXPywHDgrHwa3zkwwXB3WDR",
+                    "TDAyZ8PB1MnFXPywHDgrHwa3zkwwXB3WDR",  # Amit address
                     "TXFyTRL3vau3DJe6kyxqUeazoscN8dRrHB"
                 ]
             }
