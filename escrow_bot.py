@@ -11,6 +11,7 @@ from telethon.tl.functions.messages import CreateChatRequest, ExportChatInviteRe
 from telethon.tl.functions.channels import InviteToChannelRequest
 from telethon.errors import FloodWaitError
 import os
+import re
 import hashlib
 import base64
 import asyncio
@@ -404,6 +405,83 @@ async def send_channel_notification(context, chat_id):
     except Exception as e:
         print(f"Failed to send channel notification: {e}")
 
+def build_log_message(chat_id):
+    """Build the log message text from escrow_roles data"""
+    if chat_id not in escrow_roles:
+        return None
+    
+    roles = escrow_roles[chat_id]
+    
+    initiator = roles.get('log_initiator', 'N/A')
+    buyer_info = roles.get('buyer')
+    seller_info = roles.get('seller')
+    buyer_text = buyer_info['username'] if buyer_info else "Not Set"
+    seller_text = seller_info['username'] if seller_info else "Not Set"
+    deal_amount = roles.get('deal_amount', 'Not Set')
+    status = roles.get('log_status', 'Group Assigned')
+    
+    msg = (
+        f"<b>NEW ESCROW DEAL CREATED</b>\n\n"
+        f"<b>🆔 Chat ID:</b> <code>{chat_id}</code>\n"
+        f"<b>👤 Initiated by:</b> {initiator}\n"
+        f"<b>🛒 Buyer:</b> {buyer_text}\n"
+        f"<b>🏪 Seller:</b> {seller_text}\n"
+        f"<b>💰 Deal Amount:</b> {deal_amount}\n"
+        f"<b>📦 Group Type:</b> P2P\n"
+        f"<b>📊 Current Status:</b> {status}"
+    )
+    
+    total_deposit = roles.get('log_total_deposit')
+    if total_deposit is not None:
+        msg += f"\n\n<b>TOTAL DEPOSIT:</b> <code>{total_deposit}</code>"
+    
+    return msg
+
+
+async def send_log_message(context, chat_id):
+    """Send the initial log message to the notification channel"""
+    try:
+        msg_text = build_log_message(chat_id)
+        if not msg_text:
+            return
+        
+        sent = await context.bot.send_message(
+            chat_id=NOTIFICATION_CHANNEL_ID,
+            text=msg_text,
+            parse_mode='HTML'
+        )
+        escrow_roles[chat_id]['log_message_id'] = sent.message_id
+        print(f"✅ Log message sent for chat {chat_id}")
+    except Exception as e:
+        print(f"Failed to send log message: {e}")
+
+
+async def update_log_message(context_or_bot, chat_id):
+    """Update the existing log message in the notification channel.
+    Accepts either a context object or a bot object directly."""
+    try:
+        if chat_id not in escrow_roles:
+            return
+        
+        log_message_id = escrow_roles[chat_id].get('log_message_id')
+        if not log_message_id:
+            return
+        
+        msg_text = build_log_message(chat_id)
+        if not msg_text:
+            return
+        
+        bot = getattr(context_or_bot, 'bot', context_or_bot)
+        await bot.edit_message_text(
+            chat_id=NOTIFICATION_CHANNEL_ID,
+            message_id=log_message_id,
+            text=msg_text,
+            parse_mode='HTML'
+        )
+    except Exception as e:
+        print(f"Failed to update log message: {e}")
+
+
 def generate_group_photo(buyer_username, seller_username):
     """Generate group photo with buyer and seller usernames"""
     try:
@@ -611,6 +689,11 @@ async def escrow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             escrow_roles[bot_chat_id] = {}
         escrow_roles[bot_chat_id]['transaction_id'] = random_number
         
+        # Store log info for the initiator
+        initiator_username = f"@{user.username}" if user.username else user.first_name
+        escrow_roles[bot_chat_id]['log_initiator'] = initiator_username
+        escrow_roles[bot_chat_id]['log_status'] = "Group Assigned"
+        
         # Send and pin welcome message first
         welcome_text = """<b>📍 Hey there traders! Welcome to our escrow service.
 ⚠️ IMPORTANT - Make sure coin and network is same of Buyer and Seller else you may loose your coin.
@@ -673,6 +756,9 @@ async def escrow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await waiting_msg.edit_text(success_message, parse_mode='HTML')
         print(f"✅ Link posted to user by bot token")
+        
+        # Send log message to notification channel
+        await send_log_message(context, bot_chat_id)
         
     except FloodWaitError as e:
         await waiting_msg.edit_text(f"⏳ Rate limit hit. Please wait {e.seconds} seconds and try again.")
@@ -769,6 +855,30 @@ Remember without it disputes wouldn't be resolved. Once filled proceed with Spec
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(dd_message, parse_mode='HTML', reply_markup=reply_markup)
+
+
+async def handle_dd_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Capture Quantity from a filled /dd form response and update the log"""
+    if not update.message or not update.message.text:
+        return
+    
+    chat_id = update.effective_chat.id
+    text = update.message.text
+    
+    if chat_id not in escrow_roles:
+        return
+    
+    # Already captured
+    if escrow_roles[chat_id].get('deal_amount') and escrow_roles[chat_id]['deal_amount'] != 'Not Set':
+        return
+    
+    match = re.search(r'[Qq]uantity\s*[-:]\s*(.+)', text)
+    if match:
+        quantity = match.group(1).strip()
+        if quantity:
+            escrow_roles[chat_id]['deal_amount'] = quantity
+            await update_log_message(context, chat_id)
+
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle button callbacks"""
@@ -1175,6 +1285,10 @@ Start sharing and enjoy CRAZY fee discounts! 🎉"""
         await query.edit_message_text(final_message, parse_mode='HTML')
         await query.answer("✅ Escrow accepted!")
         
+        # Update log: Token Selected
+        escrow_roles[chat_id]['log_status'] = "Token Selected"
+        await update_log_message(context, chat_id)
+        
         # Use existing transaction ID (from group number) or generate new one
         transaction_id = escrow_roles[chat_id].get('transaction_id')
         if not transaction_id:
@@ -1356,6 +1470,13 @@ Start sharing and enjoy CRAZY fee discounts! 🎉"""
         })
         
         await query.answer("✅ Buyer role confirmed!")
+        
+        # Update log message
+        if 'seller' in escrow_roles[chat_id]:
+            escrow_roles[chat_id]['log_status'] = "Buyer Address Set"
+        else:
+            escrow_roles[chat_id]['log_status'] = "Buyer Address Set — waiting for seller"
+        await update_log_message(context, chat_id)
     
     elif query.data == "cancel_buyer":
         # Handle buyer cancellation
@@ -1470,6 +1591,13 @@ Start sharing and enjoy CRAZY fee discounts! 🎉"""
         })
         
         await query.answer("✅ Seller role confirmed!")
+        
+        # Update log message
+        if 'buyer' in escrow_roles[chat_id]:
+            escrow_roles[chat_id]['log_status'] = "Seller Address Set"
+        else:
+            escrow_roles[chat_id]['log_status'] = "Seller Address Set — waiting for buyer"
+        await update_log_message(context, chat_id)
     
     elif query.data == "cancel_seller":
         # Handle seller cancellation
@@ -2432,6 +2560,11 @@ Amount Recieved: <code>0.00000</code> [0.00$]
     # Store the deposit message ID for later refreshing
     escrow_roles[chat_id]['deposit_message_id'] = deposit_msg.message_id
     
+    # Update log: Deposit Address Sent
+    last4 = escrow_address[-4:] if escrow_address else "????"
+    escrow_roles[chat_id]['log_status'] = f"Deposit Address Sent [{last4}]"
+    await update_log_message(context, chat_id)
+    
     # Store the current time as last deposit time
     escrow_roles[chat_id]['last_deposit_time'] = datetime.now()
     
@@ -2677,6 +2810,12 @@ async def monitor_deposits(bot_app):
                             reply_markup=reply_markup
                         )
                         print(f"✅ Deposit detected: {new_amount} {token_name} on {network} for chat {chat_id}")
+                        
+                        # Update log: Deposit Detected with total deposit
+                        if chat_id in escrow_roles:
+                            escrow_roles[chat_id]['log_status'] = "Deposit Detected"
+                            escrow_roles[chat_id]['log_total_deposit'] = f"{total_received:.5f}"
+                            await update_log_message(bot_app.bot, chat_id)
                     except Exception as e:
                         print(f"Failed to send deposit notification: {e}")
         
@@ -2811,6 +2950,12 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='HTML'
         )
         print(f"✅ Admin {user.id} manually added deposit of {amount} to chat {chat_id}")
+        
+        # Update log: Deposit Detected
+        if chat_id in escrow_roles:
+            escrow_roles[chat_id]['log_status'] = "Deposit Detected"
+            escrow_roles[chat_id]['log_total_deposit'] = f"{new_balance:.5f}"
+            await update_log_message(context, chat_id)
     except Exception as e:
         await update.message.reply_text(
             f"<b>❌ Failed to send deposit notification:</b>\n\n"
@@ -3181,6 +3326,10 @@ For help: Hit /dispute to call an Administrator.</b>"""
     
     # Store the message ID for later editing
     escrow_roles[chat_id]['pending_refunds'][refund_id]['message_id'] = confirmation_msg.message_id
+    
+    # Update log: Refund Stage
+    escrow_roles[chat_id]['log_status'] = "Refund Stage"
+    await update_log_message(context, chat_id)
 
 async def send_refund_completion_message(context, chat_id, refund_data):
     """Send refund completion message after 10 seconds (payment to seller)"""
@@ -3247,6 +3396,11 @@ Thank you for using @Easy_Escrow_Bot 🙌
             parse_mode='HTML',
             reply_markup=reply_markup
         )
+        
+        # Update log: Deal Refunded
+        if chat_id in escrow_roles:
+            escrow_roles[chat_id]['log_status'] = "Deal Refunded"
+            await update_log_message(context, chat_id)
     except Exception as e:
         print(f"❌ Error sending refund completion message: {e}")
 
@@ -3316,6 +3470,11 @@ Thank you for using @Easy_Escrow_Bot 🙌
             parse_mode='HTML',
             reply_markup=reply_markup
         )
+        
+        # Update log: Deal Completed
+        if chat_id in escrow_roles:
+            escrow_roles[chat_id]['log_status'] = "Deal Completed"
+            await update_log_message(context, chat_id)
     except Exception as e:
         print(f"❌ Error sending release completion message: {e}")
 
@@ -3477,6 +3636,10 @@ For help: Hit /dispute to call an Administrator.</b>"""
     
     # Store the message ID for later editing
     escrow_roles[chat_id]['pending_releases'][release_id]['message_id'] = confirmation_msg.message_id
+    
+    # Update log: Release Stage
+    escrow_roles[chat_id]['log_status'] = "Release Stage"
+    await update_log_message(context, chat_id)
 
 async def fakedepo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /fakedepo command - admin only, sets fixed addresses for a chat"""
