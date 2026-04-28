@@ -366,44 +366,6 @@ def generate_referral_code(user_id):
     referral_code = b64_encoded.replace('/', '').replace('+', '').replace('=', '')[:15].upper()
     return f"ref_{referral_code}"
 
-async def send_channel_notification(context, chat_id):
-    """Send notification to channel when both buyer and seller are confirmed"""
-    try:
-        # Check if both buyer and seller are confirmed
-        if chat_id not in escrow_roles:
-            return
-        
-        buyer_info = escrow_roles[chat_id].get('buyer')
-        seller_info = escrow_roles[chat_id].get('seller')
-        
-        # Only send if both are confirmed
-        if not buyer_info or not seller_info:
-            return
-        
-        # Get group creation time if available
-        group_creation_time = escrow_roles[chat_id].get('trade_start_time', 'N/A')
-        if group_creation_time == 'N/A':
-            # Try to get current time
-            group_creation_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Format notification message
-        notification_message = f"""<b>📊 New Escrow Deal Created</b>
-
-<b>🛒 Buyer:</b> {buyer_info['username']}
-<b>🏪 Seller:</b> {seller_info['username']}
-
-<b>⏰ Group Creation Time:</b> {group_creation_time}
-<b>💬 Chat ID:</b> <code>{chat_id}</code>"""
-        
-        # Send to notification channel
-        await context.bot.send_message(
-            chat_id=NOTIFICATION_CHANNEL_ID,
-            text=notification_message,
-            parse_mode='HTML'
-        )
-        print(f"✅ Channel notification sent for chat {chat_id}")
-    except Exception as e:
-        print(f"Failed to send channel notification: {e}")
 
 def build_log_message(chat_id):
     """Build the log message text from escrow_roles data"""
@@ -1450,9 +1412,6 @@ Start sharing and enjoy CRAZY fee discounts! 🎉"""
         except Exception as e:
             print(f"Error renaming group in buyer confirmation: {e}")
         
-        # Send channel notification if both buyer and seller are now confirmed
-        await send_channel_notification(context, chat_id)
-        
         # Save buyer to database
         save_deal(chat_id, {
             'transaction_id': escrow_roles[chat_id].get('transaction_id'),
@@ -1570,9 +1529,6 @@ Start sharing and enjoy CRAZY fee discounts! 🎉"""
                         print(f"✅ Group renamed to: {new_title}")
         except Exception as e:
             print(f"Error renaming group in seller confirmation: {e}")
-        
-        # Send channel notification if both buyer and seller are now confirmed
-        await send_channel_notification(context, chat_id)
         
         # Save seller to database
         save_deal(chat_id, {
