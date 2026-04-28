@@ -458,6 +458,34 @@ def generate_group_photo(buyer_username, seller_username):
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command"""
+    # Handle deep-link: /start instructions
+    if context.args and context.args[0] == "instructions":
+        instructions_message = """📘 GUIDE " HOW TO USE @Easy_Escorw_Bot ( Escrow Bot ) " FOR SAFE AND FASTEST HASSLE-FREE ESCROW 🚀  
+
+Step 1 : Use /escrow command in the DM of the Bot.  
+( It will auto-create a safe escrow group and drop the link so that buyer and seller can join via that link. ) 🔗👥  
+
+Step 2 : Use /dd command to initiate the process of escrow where you will get the format to express your deal and info.  
+( It will include quantity, rate, TnC's agreed upon by both parties. ) 📝🤝  
+
+Step 3 : Use /buyer ( your address ) if you are a buyer 🛒 or /seller ( your address ) if you are a seller 🏪 to verify address and continue the deal.  
+( Provide your crypto address which will be used in case of release or refund. ) 💳🔐  
+
+Step 4 : Choose the token and network by /token command and then either party has to accept it. ✅💱  
+
+Step 5 : Use /deposit command to deposit the asset within the bot.  
+( Note : Bot will give the deposit address and it has a time limit to deposit ⏳, you have to deposit within that given time. ) ⏰💸  
+
+Step 6 : Once verified by the bot, you can continue the deal.  
+( Bot will send the real-time deposit details in the chat. ) 📊💬  
+
+Step 7 : After a successful deal, you can release the asset to the party by using /release ( amount / all ).  
+( Thus, the bot will itself release the asset to the party and send the verification in the chat. ) 🎉💼  
+
+🚨 IN CASE OF ANY DISPUTE OR ISSUE, YOU CAN FEEL FREE TO USE /dispute COMMAND, AND SUPPORT WILL JOIN YOU SHORTLY. 🛎️👩‍💻"""
+        await update.message.reply_text(instructions_message)
+        return
+
     welcome_message = """💫 @Easy_Escorw_Bot 💫
 Your Trustworthy Telegram Escrow Service
 
@@ -735,7 +763,10 @@ Conditions (if any) -</code>
 
 Remember without it disputes wouldn't be resolved. Once filled proceed with Specifications of the seller or buyer with /seller or /buyer <b>[CRYPTO ADDRESS]</b>"""
     
-    await update.message.reply_text(dd_message, parse_mode='HTML')
+    keyboard = [[InlineKeyboardButton("How To Use Bot ❔", url="https://t.me/Easy_Escorw_Bot?start=instructions")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(dd_message, parse_mode='HTML', reply_markup=reply_markup)
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle button callbacks"""
