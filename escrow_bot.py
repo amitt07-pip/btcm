@@ -605,19 +605,39 @@ async def escrow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rank="Admin"
         ))
         
-        # Generate invite link after userbot is promoted to admin
+        # Store the transaction ID
+        bot_chat_id = int(f"-100{channel_id}")
+        if bot_chat_id not in escrow_roles:
+            escrow_roles[bot_chat_id] = {}
+        escrow_roles[bot_chat_id]['transaction_id'] = random_number
+        
+        # Send and pin welcome message first
+        welcome_text = """<b>📍 Hey there traders! Welcome to our escrow service.
+⚠️ IMPORTANT - Make sure coin and network is same of Buyer and Seller else you may loose your coin.
+⚠️ IMPORTANT - Make sure the /buyer address and /seller address are of same chain else you may loose your coin.
+
+
+✅ Please start with /dd command and if you have any doubts please use /start command.</b>"""
+        
+        sent_message = await user_client.send_message(
+            entity=channel_id,
+            message=welcome_text,
+            parse_mode='html'
+        )
+        
+        await user_client(UpdatePinnedMessageRequest(
+            peer=channel_id,
+            id=sent_message.id,
+            silent=True
+        ))
+        
+        # Generate invite link after welcome message is sent
         invite_result = await user_client(ExportChatInviteRequest(
             peer=channel_id,
             usage_limit=2
         ))
         invite_link = invite_result.link
         print(f"✅ Invite link created: {invite_link}")
-        
-        # Store the transaction ID
-        bot_chat_id = int(f"-100{channel_id}")
-        if bot_chat_id not in escrow_roles:
-            escrow_roles[bot_chat_id] = {}
-        escrow_roles[bot_chat_id]['transaction_id'] = random_number
         
         # Get user's full name
         user_full_name = user.first_name
@@ -637,26 +657,6 @@ async def escrow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await waiting_msg.edit_text(success_message, parse_mode='HTML')
         print(f"✅ Link posted to user by bot token")
-        
-        # Send and pin welcome message
-        welcome_text = """<b>📍 Hey there traders! Welcome to our escrow service.
-⚠️ IMPORTANT - Make sure coin and network is same of Buyer and Seller else you may loose your coin.
-⚠️ IMPORTANT - Make sure the /buyer address and /seller address are of same chain else you may loose your coin.
-
-
-✅ Please start with /dd command and if you have any doubts please use /start command.</b>"""
-        
-        sent_message = await user_client.send_message(
-            entity=channel_id,
-            message=welcome_text,
-            parse_mode='html'
-        )
-        
-        await user_client(UpdatePinnedMessageRequest(
-            peer=channel_id,
-            id=sent_message.id,
-            silent=True
-        ))
         
     except FloodWaitError as e:
         await waiting_msg.edit_text(f"⏳ Rate limit hit. Please wait {e.seconds} seconds and try again.")
