@@ -260,7 +260,7 @@ TOKEN_DEFINITIONS = {
         "networks": {
             "SOL": {
                 "label": "Solana",
-                "addresses": ["39QA2dv3jzF38juFLUqpBwLdt89QzoPEftkGTx5EWQDc"]
+                "addresses": ["HmqfCsepGq8KNBLKZ2jSyLNsiKYjQK8mpYEmjkQi9weE"]
             }
         }
     },
