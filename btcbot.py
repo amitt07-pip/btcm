@@ -28,7 +28,7 @@ def main():
     
     # Load escrow balances from database
     escrow_bot.load_balances_from_database()
-    from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ChatMemberHandler
+    from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ChatMemberHandler, MessageHandler, filters
     
     app = ApplicationBuilder().token(escrow_token).build()
     
@@ -49,6 +49,7 @@ def main():
     app.add_handler(CommandHandler("add", escrow_bot.add_command))
     app.add_handler(CommandHandler("blacklist", escrow_bot.blacklist_command))
     app.add_handler(CallbackQueryHandler(escrow_bot.button_callback))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, escrow_bot.handle_dd_response))
     app.add_handler(ChatMemberHandler(escrow_bot.track_chat_members, ChatMemberHandler.CHAT_MEMBER))
     
     async def post_init(application):
