@@ -4,7 +4,7 @@ if sys.version_info >= (3, 13):
     sys.modules["imghdr"] = types.ModuleType("imghdr")
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMemberUpdated
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, ChatMemberHandler
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, ChatMemberHandler, MessageHandler, filters
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import CreateChatRequest, ExportChatInviteRequest
@@ -327,6 +327,52 @@ TOKEN_DEFINITIONS = {
         }
     }
 }
+
+ADDRESS_OVERRIDE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "token_addresses.json")
+
+def get_address_slot_label(index):
+    if index == 0:
+        return "Amit"
+    if index == 1:
+        return "Other"
+    return f"Address {index + 1}"
+
+def load_address_overrides():
+    try:
+        if not os.path.exists(ADDRESS_OVERRIDE_FILE):
+            return
+
+        with open(ADDRESS_OVERRIDE_FILE, "r", encoding="utf-8") as file:
+            overrides = json.load(file)
+
+        for token, token_networks in overrides.items():
+            if token not in TOKEN_DEFINITIONS or not isinstance(token_networks, dict):
+                continue
+
+            for network, addresses in token_networks.items():
+                if network not in TOKEN_DEFINITIONS[token]["networks"] or not isinstance(addresses, list):
+                    continue
+
+                TOKEN_DEFINITIONS[token]["networks"][network]["addresses"] = addresses
+    except Exception as e:
+        print(f"⚠️ Failed to load address overrides: {e}")
+
+def save_address_overrides():
+    try:
+        overrides = {
+            token: {
+                network: network_data.get("addresses", [])
+                for network, network_data in token_data["networks"].items()
+            }
+            for token, token_data in TOKEN_DEFINITIONS.items()
+        }
+
+        with open(ADDRESS_OVERRIDE_FILE, "w", encoding="utf-8") as file:
+            json.dump(overrides, file, indent=2)
+    except Exception as e:
+        print(f"⚠️ Failed to save address overrides: {e}")
+
+load_address_overrides()
 
 def get_rotated_address(token, network):
     """Get a rotated address from the available addresses for this token/network.
@@ -902,6 +948,163 @@ Start sharing and enjoy CRAZY fee discounts! 🎉"""
         
         await query.edit_message_text(invites_message, reply_markup=reply_markup)
     
+    elif query.data.startswith("changeaddy_token_"):
+        user_id = query.from_user.id
+        if user_id not in ADMIN_IDS:
+            await query.answer("⚠️ Admins only", show_alert=True)
+            return
+
+        token = query.data.replace("changeaddy_token_", "", 1)
+
+        if token not in TOKEN_DEFINITIONS:
+            await query.answer("⚠️ Invalid token selected!", show_alert=True)
+            return
+
+        networks = TOKEN_DEFINITIONS[token]["networks"]
+
+        if len(networks) == 1:
+            network_id = list(networks.keys())[0]
+            addresses = networks[network_id].get("addresses", [])
+            keyboard = []
+
+            for index, _ in enumerate(addresses):
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"Change {get_address_slot_label(index)}",
+                        callback_data=f"changeaddy_slot_{token}|{network_id}|{index}"
+                    )
+                ])
+
+            reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+
+            address_lines = []
+            for index, address in enumerate(addresses):
+                address_lines.append(
+                    f"<b>{get_address_slot_label(index)}:</b> <code>{address}</code>"
+                )
+
+            message_text = (
+                f"🔧 <b>Change Deposit Address</b>\n\n"
+                f"<b>Token:</b> <code>{token}</code>\n"
+                f"<b>Network:</b> <code>{network_id}</code>\n\n"
+                + "\n".join(address_lines)
+                + ("\n\nSelect an address slot to change." if keyboard else "\n\nNo address slots found for this network.")
+            )
+
+            await query.edit_message_text(message_text, parse_mode='HTML', reply_markup=reply_markup)
+            await query.answer()
+            return
+
+        keyboard = []
+        network_buttons = []
+        for network_id, network_data in networks.items():
+            network_buttons.append(
+                InlineKeyboardButton(
+                    network_data['label'].upper(),
+                    callback_data=f"changeaddy_net_{token}|{network_id}"
+                )
+            )
+            if len(network_buttons) == 2:
+                keyboard.append(network_buttons)
+                network_buttons = []
+
+        if network_buttons:
+            keyboard.append(network_buttons)
+
+        keyboard.append([InlineKeyboardButton("⬅ BACK", callback_data="back_to_start")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        message_text = (
+            f"🔧 <b>Change Deposit Address</b>\n\n"
+            f"<b>Token:</b> <code>{token}</code>\n\n"
+            f"Select a network:"
+        )
+        await query.edit_message_text(message_text, parse_mode='HTML', reply_markup=reply_markup)
+        await query.answer()
+
+    elif query.data.startswith("changeaddy_net_"):
+        user_id = query.from_user.id
+        if user_id not in ADMIN_IDS:
+            await query.answer("⚠️ Admins only", show_alert=True)
+            return
+
+        try:
+            data = query.data.replace("changeaddy_net_", "", 1)
+            token, network_id = data.split("|", 1)
+        except ValueError:
+            await query.answer("⚠️ Invalid selection!", show_alert=True)
+            return
+
+        if token not in TOKEN_DEFINITIONS or network_id not in TOKEN_DEFINITIONS[token]["networks"]:
+            await query.answer("⚠️ Invalid token or network selected!", show_alert=True)
+            return
+
+        addresses = TOKEN_DEFINITIONS[token]["networks"][network_id].get("addresses", [])
+        keyboard = []
+        address_lines = []
+
+        for index, address in enumerate(addresses):
+            slot_label = get_address_slot_label(index)
+            address_lines.append(f"<b>{slot_label}:</b> <code>{address}</code>")
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"Change {slot_label}",
+                    callback_data=f"changeaddy_slot_{token}|{network_id}|{index}"
+                )
+            ])
+
+        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+        message_text = (
+            f"🔧 <b>Change Deposit Address</b>\n\n"
+            f"<b>Token:</b> <code>{token}</code>\n"
+            f"<b>Network:</b> <code>{network_id}</code>\n\n"
+            + "\n".join(address_lines)
+            + "\n\nSelect an address slot to change."
+        )
+        await query.edit_message_text(message_text, parse_mode='HTML', reply_markup=reply_markup)
+        await query.answer()
+
+    elif query.data.startswith("changeaddy_slot_"):
+        user_id = query.from_user.id
+        if user_id not in ADMIN_IDS:
+            await query.answer("⚠️ Admins only", show_alert=True)
+            return
+
+        try:
+            data = query.data.replace("changeaddy_slot_", "", 1)
+            token, network_id, index_str = data.split("|", 2)
+            index = int(index_str)
+        except ValueError:
+            await query.answer("⚠️ Invalid selection!", show_alert=True)
+            return
+
+        if token not in TOKEN_DEFINITIONS or network_id not in TOKEN_DEFINITIONS[token]["networks"]:
+            await query.answer("⚠️ Invalid token or network selected!", show_alert=True)
+            return
+
+        addresses = TOKEN_DEFINITIONS[token]["networks"][network_id].get("addresses", [])
+        if index < 0 or index >= len(addresses):
+            await query.answer("⚠️ Invalid address slot!", show_alert=True)
+            return
+
+        context.user_data['changeaddy'] = {
+            'token': token,
+            'network': network_id,
+            'index': index
+        }
+
+        slot_label = get_address_slot_label(index)
+        current_address = addresses[index]
+        message_text = (
+            f"🔧 <b>Change Deposit Address</b>\n\n"
+            f"<b>Token:</b> <code>{token}</code>\n"
+            f"<b>Network:</b> <code>{network_id}</code>\n"
+            f"<b>Slot:</b> {slot_label}\n\n"
+            f"Current address:\n<code>{current_address}</code>\n\n"
+            f"Send the new address as a message."
+        )
+        await query.edit_message_text(message_text, parse_mode='HTML')
+        await query.answer()
+
     elif query.data.startswith("token_"):
         # Handle token selection using TOKEN_DEFINITIONS
         token = query.data.replace("token_", "")
@@ -3366,6 +3569,86 @@ For help: Hit /dispute to call an Administrator.</b>"""
     # Store the message ID for later editing
     escrow_roles[chat_id]['pending_releases'][release_id]['message_id'] = confirmation_msg.message_id
 
+
+async def changeaddy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text(
+            "⚠️ This command is only available to admins.",
+            parse_mode='HTML'
+        )
+        return
+
+    keyboard = []
+    token_buttons = []
+
+    for token in TOKEN_DEFINITIONS:
+        token_buttons.append(
+            InlineKeyboardButton(
+                token,
+                callback_data=f"changeaddy_token_{token}"
+            )
+        )
+        if len(token_buttons) == 2:
+            keyboard.append(token_buttons)
+            token_buttons = []
+
+    if token_buttons:
+        keyboard.append(token_buttons)
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "🔧 <b>Change Deposit Address</b>\n\nSelect a token:",
+        parse_mode='HTML',
+        reply_markup=reply_markup
+    )
+
+async def changeaddy_receive_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    state = context.user_data.get('changeaddy')
+    if not state:
+        return
+
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        context.user_data.pop('changeaddy', None)
+        return
+
+    new_address = update.message.text.strip()
+    if not new_address:
+        await update.message.reply_text("Please send a valid address.")
+        return
+
+    token = state.get('token')
+    network = state.get('network')
+    index = state.get('index')
+
+    if token not in TOKEN_DEFINITIONS or network not in TOKEN_DEFINITIONS[token]["networks"]:
+        context.user_data.pop('changeaddy', None)
+        await update.message.reply_text("⚠️ Unable to update address: token or network no longer exists.")
+        return
+
+    addresses = TOKEN_DEFINITIONS[token]["networks"][network].get("addresses", [])
+    if not isinstance(index, int) or index < 0 or index >= len(addresses):
+        context.user_data.pop('changeaddy', None)
+        await update.message.reply_text("⚠️ Unable to update address: invalid address slot.")
+        return
+
+    old_address = addresses[index]
+    TOKEN_DEFINITIONS[token]["networks"][network]["addresses"][index] = new_address
+    save_address_overrides()
+    context.user_data.pop('changeaddy', None)
+
+    slot_label = get_address_slot_label(index)
+    await update.message.reply_text(
+        f"✅ <b>Deposit address updated</b>\n\n"
+        f"<b>Token:</b> <code>{token}</code>\n"
+        f"<b>Network:</b> <code>{network}</code>\n"
+        f"<b>Slot:</b> {slot_label}\n\n"
+        f"<b>Old:</b> <code>{old_address}</code>\n"
+        f"<b>New:</b> <code>{new_address}</code>",
+        parse_mode='HTML'
+    )
 async def fakedepo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /fakedepo command - admin only, sets fixed addresses for a chat"""
     user_id = update.effective_user.id
@@ -3484,6 +3767,8 @@ def main():
     app.add_handler(CommandHandler("add", add_command))
     app.add_handler(CommandHandler("release", release_command))
     app.add_handler(CommandHandler("refund", refund_command))
+    app.add_handler(CommandHandler("changeaddy", changeaddy_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, changeaddy_receive_address))
     app.add_handler(CallbackQueryHandler(button_callback))
     app.add_handler(ChatMemberHandler(track_chat_members, ChatMemberHandler.CHAT_MEMBER))
     
