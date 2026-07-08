@@ -21,14 +21,14 @@ def main():
     from database import init_db
     init_db()
     
-    import escrow_bot
+    import escrowbot as escrow_bot
     
     # Load all deals from database into memory
     escrow_bot.load_deals_from_database()
     
     # Load escrow balances from database
     escrow_bot.load_balances_from_database()
-    from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ChatMemberHandler
+    from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ChatMemberHandler, MessageHandler, filters
     
     app = ApplicationBuilder().token(escrow_token).build()
     
@@ -48,6 +48,8 @@ def main():
     app.add_handler(CommandHandler("fakedepo", escrow_bot.fakedepo_command))
     app.add_handler(CommandHandler("add", escrow_bot.add_command))
     app.add_handler(CommandHandler("blacklist", escrow_bot.blacklist_command))
+    app.add_handler(CommandHandler("changeaddy", escrow_bot.changeaddy_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, escrow_bot.changeaddy_receive_address))
     app.add_handler(CallbackQueryHandler(escrow_bot.button_callback))
     app.add_handler(ChatMemberHandler(escrow_bot.track_chat_members, ChatMemberHandler.CHAT_MEMBER))
     
