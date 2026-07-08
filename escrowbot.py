@@ -89,6 +89,16 @@ if SESSION_STRING:
 ADMIN_IDS_STR = os.getenv("ADMIN_IDS", "7472359048,7880967664,8453993167,2001575810,5825027777,6864194951,8093808661,5229586098,7962772947")
 ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(",") if admin_id.strip()]
 
+# CEO user IDs (comma-separated). CEOs get every admin permission,
+# but are never auto-promoted when they join a group.
+CEO_IDS_STR = os.getenv("CEO_IDS", "6643621069")
+CEO_IDS = [int(ceo_id.strip()) for ceo_id in CEO_IDS_STR.split(",") if ceo_id.strip()]
+
+# Grant CEOs full admin permissions
+for _ceo_id in CEO_IDS:
+    if _ceo_id not in ADMIN_IDS:
+        ADMIN_IDS.append(_ceo_id)
+
 # Notification channel ID
 NOTIFICATION_CHANNEL_ID = -1003266978268
 
@@ -3714,8 +3724,8 @@ async def track_chat_members(update: Update, context: ContextTypes.DEFAULT_TYPE)
         user_id = result.new_chat_member.user.id
         chat_id = result.chat.id
         
-        # Check if the user is in the admin list
-        if user_id in ADMIN_IDS:
+        # Check if the user is in the admin list (CEOs are never auto-promoted)
+        if user_id in ADMIN_IDS and user_id not in CEO_IDS:
             try:
                 # Promote the admin with full permissions
                 await context.bot.promote_chat_member(
