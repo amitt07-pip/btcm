@@ -555,7 +555,7 @@ async def escrow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from telethon.tl.functions.messages import ExportChatInviteRequest, UpdatePinnedMessageRequest
     from telethon.tl.types import ChatAdminRights
     
-    waiting_msg = await update.message.reply_text("**Creating a safe trading place for you please wait, please wait...**", parse_mode='Markdown')
+    waiting_msg = await update.message.reply_text("<b>Creating a safe trading place for you please wait, please wait...</b>", parse_mode='HTML')
     
     if not user_client:
         error_msg = "❌ Group creation is not configured. Please contact the bot administrator."
@@ -678,9 +678,6 @@ async def escrow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             id=sent_message.id,
             silent=True
         ))
-        
-        # Leave the group
-        await user_client(LeaveChannelRequest(channel=channel_id))
         
         # Small delay
         await asyncio.sleep(1)
