@@ -802,7 +802,10 @@ Conditions (if any) -</code>
 
 Remember without it disputes wouldn't be resolved. Once filled proceed with Specifications of the seller or buyer with /seller or /buyer <b>[CRYPTO ADDRESS]</b>"""
     
-    await update.message.reply_text(dd_message, parse_mode='HTML')
+    keyboard = [[InlineKeyboardButton("How To Use Bot ❔", url="https://t.me/Easy_Escorw_Bot?start=instructions")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(dd_message, parse_mode='HTML', reply_markup=reply_markup)
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle button callbacks"""
