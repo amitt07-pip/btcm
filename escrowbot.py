@@ -464,7 +464,7 @@ def generate_group_photo(buyer_username, seller_username):
     """Generate group photo with buyer and seller usernames"""
     try:
         # Open the new template image
-        img = Image.open("attached_assets/photo_4913955247265352489_x_1762874099369.jpg")
+        img = Image.open(os.path.join(os.path.dirname(__file__), "photo_4913955247265352489_x_1762874099369.jpg"))
         draw = ImageDraw.Draw(img)
         
         # Try to use fonts that match the template style (Impact-like bold)
@@ -2278,7 +2278,7 @@ async def buyer_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         help_message = "<code>/buyer [Your Crypto Address]</code>\n\n⛓️ <b>Chains Supported:</b> doge, bsc, ltc, sol, eth, tron, btc"
         
         try:
-            with open("attached_assets/photo_6316666496414845910_y_1762874545822.jpg", "rb") as photo:
+            with open(os.path.join(os.path.dirname(__file__), "photo_6316666496414845910_y.jpg"), "rb") as photo:
                 await update.message.reply_photo(
                     photo=photo,
                     caption=help_message,
@@ -2362,7 +2362,7 @@ async def seller_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         help_message = "<code>/seller [Your Crypto Address]</code>\n\n⛓️ <b>Chains Supported:</b> doge, bsc, ltc, sol, eth, tron, btc"
         
         try:
-            with open("attached_assets/photo_6314481552062090385_y_1762874602327.jpg", "rb") as photo:
+            with open(os.path.join(os.path.dirname(__file__), "photo_6314481552062090385_y.jpg"), "rb") as photo:
                 await update.message.reply_photo(
                     photo=photo,
                     caption=help_message,
