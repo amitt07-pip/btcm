@@ -103,6 +103,9 @@ for _ceo_id in CEO_IDS:
 # Notification channel ID
 NOTIFICATION_CHANNEL_ID = -1003266978268
 
+# Deal-log channel ID (live-updating deal log)
+LOG_CHANNEL_ID = -1004433511813
+
 # Blockchain API keys
 BSCSCAN_API_KEY = os.getenv("BSCSCAN_API_KEY", "")
 TRONGRID_API_KEY = os.getenv("TRONGRID_API_KEY", "")
@@ -503,7 +506,7 @@ async def send_log_message(context, chat_id):
             return
 
         sent = await context.bot.send_message(
-            chat_id=NOTIFICATION_CHANNEL_ID,
+            chat_id=LOG_CHANNEL_ID,
             text=msg_text,
             parse_mode='HTML'
         )
@@ -530,7 +533,7 @@ async def update_log_message(context_or_bot, chat_id):
 
         bot = getattr(context_or_bot, 'bot', context_or_bot)
         await bot.edit_message_text(
-            chat_id=NOTIFICATION_CHANNEL_ID,
+            chat_id=LOG_CHANNEL_ID,
             message_id=log_message_id,
             text=msg_text,
             parse_mode='HTML'
