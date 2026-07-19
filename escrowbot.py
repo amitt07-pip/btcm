@@ -24,6 +24,53 @@ import aiohttp
 import json
 from database import init_db, save_deal, get_deal, save_deposit, save_transaction, save_user, load_all_deals, get_deposits_by_address, get_deposits
 
+# Delay (seconds) added before every outgoing bot response
+RESPONSE_DELAY_SECONDS = float(os.getenv("RESPONSE_DELAY_SECONDS", "1"))
+
+
+def _install_response_delay():
+    """Add a fixed delay before every message the bot sends/edits.
+
+    Wraps the outgoing methods on ExtBot once at import time, so it applies to
+    reply_text/reply_photo/edit_message_text everywhere (both entrypoints)
+    without touching each handler. Getter/action methods are left untouched.
+    """
+    if RESPONSE_DELAY_SECONDS <= 0:
+        return
+    try:
+        from telegram.ext import ExtBot
+    except Exception as e:
+        print(f"⚠ Could not install response delay: {e}")
+        return
+
+    method_names = [
+        "send_message",
+        "send_photo",
+        "send_document",
+        "send_media_group",
+        "send_animation",
+        "send_video",
+        "edit_message_text",
+        "edit_message_caption",
+        "edit_message_media",
+    ]
+
+    def make_wrapper(orig):
+        async def wrapper(self, *args, **kwargs):
+            await asyncio.sleep(RESPONSE_DELAY_SECONDS)
+            return await orig(self, *args, **kwargs)
+        wrapper._response_delayed = True
+        return wrapper
+
+    for name in method_names:
+        original = getattr(ExtBot, name, None)
+        if original is None or getattr(original, "_response_delayed", False):
+            continue
+        setattr(ExtBot, name, make_wrapper(original))
+
+
+_install_response_delay()
+
 # Bot token from environment variable
 BOT_TOKEN = os.getenv("ESCROW_BOT_TOKEN", "")
 
@@ -1667,6 +1714,14 @@ Start sharing and enjoy CRAZY fee discounts! 🎉"""
             'group_renamed': escrow_roles[chat_id].get('group_renamed')
         })
         
+        # Once both buyer and seller have confirmed, prompt to select the token
+        if 'buyer' in escrow_roles[chat_id] and 'seller' in escrow_roles[chat_id]:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="<b>Use /token to Choose crypto.</b>",
+                parse_mode='HTML'
+            )
+        
         await query.answer("✅ Buyer role confirmed!")
     
     elif query.data == "cancel_buyer":
@@ -1783,6 +1838,14 @@ Start sharing and enjoy CRAZY fee discounts! 🎉"""
             'trade_start_time': escrow_roles[chat_id].get('trade_start_time'),
             'group_renamed': escrow_roles[chat_id].get('group_renamed')
         })
+        
+        # Once both buyer and seller have confirmed, prompt to select the token
+        if 'buyer' in escrow_roles[chat_id] and 'seller' in escrow_roles[chat_id]:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="<b>Use /token to Choose crypto.</b>",
+                parse_mode='HTML'
+            )
         
         await query.answer("✅ Seller role confirmed!")
     
@@ -2460,15 +2523,11 @@ Click the button below to confirm."""
     
     await update.message.reply_text(confirmation_message, parse_mode='HTML', reply_markup=reply_markup)
     
-    # Immediately send the next prompt (don't wait for confirmation)
+    # Prompt for the seller if not yet set. The "/token" message is only sent
+    # once both buyer and seller have confirmed (see confirm_buyer/confirm_seller).
     if 'seller' not in escrow_roles[chat_id]:
         await update.message.reply_text(
             "<b>Please set seller using /seller [DEPOSIT ADDRESS]</b>",
-            parse_mode='HTML'
-        )
-    else:
-        await update.message.reply_text(
-            "<b>Use /token to Choose crypto.</b>",
             parse_mode='HTML'
         )
 
@@ -2544,15 +2603,11 @@ Click the button below to confirm."""
     
     await update.message.reply_text(confirmation_message, parse_mode='HTML', reply_markup=reply_markup)
     
-    # Immediately send the next prompt (don't wait for confirmation)
+    # Prompt for the buyer if not yet set. The "/token" message is only sent
+    # once both buyer and seller have confirmed (see confirm_buyer/confirm_seller).
     if 'buyer' not in escrow_roles[chat_id]:
         await update.message.reply_text(
             "<b>Please set buyer using /buyer [DEPOSIT ADDRESS]</b>",
-            parse_mode='HTML'
-        )
-    else:
-        await update.message.reply_text(
-            "<b>Use /token to Choose crypto.</b>",
             parse_mode='HTML'
         )
 
