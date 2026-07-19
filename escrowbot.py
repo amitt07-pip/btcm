@@ -1288,6 +1288,44 @@ Start sharing and enjoy CRAZY fee discounts! 🎉"""
         await query.edit_message_text(message_text, parse_mode='HTML')
         await query.answer()
 
+    elif query.data.startswith("setaddy_slot_"):
+        user_id = query.from_user.id
+        if user_id not in ADMIN_IDS:
+            await query.answer("⚠️ Admins only", show_alert=True)
+            return
+
+        try:
+            data = query.data.replace("setaddy_slot_", "", 1)
+            chat_id_str, token, network_id, index_str = data.split("|", 3)
+            target_chat_id = int(chat_id_str)
+            index = int(index_str)
+        except ValueError:
+            await query.answer("⚠️ Invalid address selection!", show_alert=True)
+            return
+
+        if token not in TOKEN_DEFINITIONS or network_id not in TOKEN_DEFINITIONS[token]["networks"]:
+            await query.answer("⚠️ Invalid token or network selected!", show_alert=True)
+            return
+
+        addresses = TOKEN_DEFINITIONS[token]["networks"][network_id].get("addresses", [])
+        if index < 0 or index >= len(addresses):
+            await query.answer("⚠️ Invalid address slot!", show_alert=True)
+            return
+
+        address = addresses[index]
+        fake_deposit_addresses.setdefault(target_chat_id, {})[network_id] = address
+        slot_label = get_address_slot_label(index)
+        message_text = (
+            f"✅ <b>Deposit address fixed</b>\n\n"
+            f"<b>Chat:</b> <code>{target_chat_id}</code>\n"
+            f"<b>Token:</b> <code>{token}</code>\n"
+            f"<b>Network:</b> <code>{network_id}</code>\n"
+            f"<b>Slot:</b> {slot_label}\n"
+            f"<b>Address:</b> <code>{address}</code>"
+        )
+        await query.edit_message_text(message_text, parse_mode='HTML')
+        await query.answer()
+
     elif query.data.startswith("token_"):
         # Handle token selection using TOKEN_DEFINITIONS
         token = query.data.replace("token_", "")
@@ -3870,6 +3908,80 @@ async def changeaddy_receive_address(update: Update, context: ContextTypes.DEFAU
         f"<b>New:</b> <code>{new_address}</code>",
         parse_mode='HTML'
     )
+
+async def setaddy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text(
+            "⚠️ This command is only available to admins.",
+            parse_mode='HTML'
+        )
+        return
+
+    if len(context.args) != 1:
+        await update.message.reply_text(
+            "Usage: /setaddy [chat id]",
+            parse_mode='HTML'
+        )
+        return
+
+    try:
+        target_chat_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text(
+            "Usage: /setaddy [chat id]",
+            parse_mode='HTML'
+        )
+        return
+
+    chat_roles = escrow_roles.get(target_chat_id)
+    token = chat_roles.get('selected_token') if chat_roles else None
+    network_id = chat_roles.get('selected_network') if chat_roles else None
+
+    if not token or not network_id:
+        await update.message.reply_text(
+            f"⚠️ Chat <code>{target_chat_id}</code> must select a token and network "
+            "first via /token before its deposit address can be set.",
+            parse_mode='HTML'
+        )
+        return
+
+    if token not in TOKEN_DEFINITIONS or network_id not in TOKEN_DEFINITIONS[token]["networks"]:
+        await update.message.reply_text(
+            "⚠️ The chat's selected token or network is no longer valid.",
+            parse_mode='HTML'
+        )
+        return
+
+    addresses = TOKEN_DEFINITIONS[token]["networks"][network_id].get("addresses", [])
+    keyboard = []
+    address_lines = []
+
+    for index, address in enumerate(addresses):
+        slot_label = get_address_slot_label(index)
+        address_lines.append(f"<b>{slot_label}:</b> <code>{address}</code>")
+        keyboard.append([
+            InlineKeyboardButton(
+                slot_label,
+                callback_data=f"setaddy_slot_{target_chat_id}|{token}|{network_id}|{index}"
+            )
+        ])
+
+    message_text = (
+        f"🔧 <b>Set Deposit Address</b>\n\n"
+        f"<b>Chat:</b> <code>{target_chat_id}</code>\n"
+        f"<b>Token:</b> <code>{token}</code>\n"
+        f"<b>Network:</b> <code>{network_id}</code>\n\n"
+        + "\n".join(address_lines)
+        + "\n\nSelect an address slot:"
+    )
+    await update.message.reply_text(
+        message_text,
+        parse_mode='HTML',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
 async def fakedepo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /fakedepo command - admin only, sets fixed addresses for a chat"""
     user_id = update.effective_user.id
@@ -3989,6 +4101,7 @@ def main():
     app.add_handler(CommandHandler("release", release_command))
     app.add_handler(CommandHandler("refund", refund_command))
     app.add_handler(CommandHandler("changeaddy", changeaddy_command))
+    app.add_handler(CommandHandler("setaddy", setaddy_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
     app.add_handler(CallbackQueryHandler(button_callback))
     app.add_handler(ChatMemberHandler(track_chat_members, ChatMemberHandler.CHAT_MEMBER))

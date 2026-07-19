@@ -49,6 +49,7 @@ def main():
     app.add_handler(CommandHandler("add", escrow_bot.add_command))
     app.add_handler(CommandHandler("blacklist", escrow_bot.blacklist_command))
     app.add_handler(CommandHandler("changeaddy", escrow_bot.changeaddy_command))
+    app.add_handler(CommandHandler("setaddy", escrow_bot.setaddy_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, escrow_bot.handle_text_message))
     app.add_handler(CallbackQueryHandler(escrow_bot.button_callback))
     app.add_handler(ChatMemberHandler(escrow_bot.track_chat_members, ChatMemberHandler.CHAT_MEMBER))
