@@ -55,10 +55,23 @@ def _install_response_delay():
         "edit_message_media",
     ]
 
+    # Shared state so consecutive outgoing messages are spaced apart by at
+    # least RESPONSE_DELAY_SECONDS, regardless of which handler sends them.
+    state = {"last_send": 0.0, "lock": None}
+
     def make_wrapper(orig):
         async def wrapper(self, *args, **kwargs):
-            await asyncio.sleep(RESPONSE_DELAY_SECONDS)
-            return await orig(self, *args, **kwargs)
+            if state["lock"] is None:
+                state["lock"] = asyncio.Lock()
+            async with state["lock"]:
+                elapsed = asyncio.get_event_loop().time() - state["last_send"]
+                wait = RESPONSE_DELAY_SECONDS - elapsed
+                if wait > 0:
+                    await asyncio.sleep(wait)
+                try:
+                    return await orig(self, *args, **kwargs)
+                finally:
+                    state["last_send"] = asyncio.get_event_loop().time()
         wrapper._response_delayed = True
         return wrapper
 
