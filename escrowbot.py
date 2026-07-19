@@ -264,6 +264,7 @@ monitored_addresses = {}  # {address: {'chat_id': ..., 'network': ..., 'last_che
 
 # Track address rotation index for each token/network pair
 fake_deposit_addresses = {}  # {chat_id: {'BEP20': '0x...', 'TRC20': 'T...'}}
+chat_deposit_slot = {}  # {chat_id: slot_index}
 address_rotation_index = {}  # {token_network: index}
 
 # Token definitions with networks and addresses (with rotation support)
@@ -1296,32 +1297,23 @@ Start sharing and enjoy CRAZY fee discounts! 🎉"""
 
         try:
             data = query.data.replace("setaddy_slot_", "", 1)
-            chat_id_str, token, network_id, index_str = data.split("|", 3)
+            chat_id_str, index_str = data.split("|", 1)
             target_chat_id = int(chat_id_str)
             index = int(index_str)
         except ValueError:
             await query.answer("⚠️ Invalid address selection!", show_alert=True)
             return
 
-        if token not in TOKEN_DEFINITIONS or network_id not in TOKEN_DEFINITIONS[token]["networks"]:
-            await query.answer("⚠️ Invalid token or network selected!", show_alert=True)
-            return
-
-        addresses = TOKEN_DEFINITIONS[token]["networks"][network_id].get("addresses", [])
-        if index < 0 or index >= len(addresses):
+        if index < 0:
             await query.answer("⚠️ Invalid address slot!", show_alert=True)
             return
 
-        address = addresses[index]
-        fake_deposit_addresses.setdefault(target_chat_id, {})[network_id] = address
+        chat_deposit_slot[target_chat_id] = index
         slot_label = get_address_slot_label(index)
         message_text = (
-            f"✅ <b>Deposit address fixed</b>\n\n"
+            f"✅ <b>Deposit address slot fixed</b>\n\n"
             f"<b>Chat:</b> <code>{target_chat_id}</code>\n"
-            f"<b>Token:</b> <code>{token}</code>\n"
-            f"<b>Network:</b> <code>{network_id}</code>\n"
-            f"<b>Slot:</b> {slot_label}\n"
-            f"<b>Address:</b> <code>{address}</code>"
+            f"<b>Slot:</b> {slot_label}"
         )
         await query.edit_message_text(message_text, parse_mode='HTML')
         await query.answer()
@@ -2785,9 +2777,17 @@ async def deposit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if network in fake_addresses:
             escrow_address = fake_addresses[network]
     
-    # If no fake address, get rotated address from available pool
+    # If no fake address, resolve a fixed slot or get a rotated address
     if not escrow_address:
-        escrow_address = get_rotated_address(token, network)
+        addresses = TOKEN_DEFINITIONS[token]['networks'][network].get('addresses', [])
+        if chat_id in chat_deposit_slot:
+            slot = chat_deposit_slot[chat_id]
+            if slot < len(addresses):
+                escrow_address = addresses[slot]
+            elif addresses:
+                escrow_address = addresses[0]
+        if not escrow_address:
+            escrow_address = get_rotated_address(token, network)
         if not escrow_address:
             await update.message.reply_text("⚠️ No address available for this token/network.")
             return
@@ -3935,47 +3935,33 @@ async def setaddy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    keyboard = []
+    for index in range(2):
+        keyboard.append([
+            InlineKeyboardButton(
+                get_address_slot_label(index),
+                callback_data=f"setaddy_slot_{target_chat_id}|{index}"
+            )
+        ])
+
     chat_roles = escrow_roles.get(target_chat_id)
     token = chat_roles.get('selected_token') if chat_roles else None
     network_id = chat_roles.get('selected_network') if chat_roles else None
-
-    if not token or not network_id:
-        await update.message.reply_text(
-            f"⚠️ Chat <code>{target_chat_id}</code> must select a token and network "
-            "first via /token before its deposit address can be set.",
-            parse_mode='HTML'
-        )
-        return
-
-    if token not in TOKEN_DEFINITIONS or network_id not in TOKEN_DEFINITIONS[token]["networks"]:
-        await update.message.reply_text(
-            "⚠️ The chat's selected token or network is no longer valid.",
-            parse_mode='HTML'
-        )
-        return
-
-    addresses = TOKEN_DEFINITIONS[token]["networks"][network_id].get("addresses", [])
-    keyboard = []
     address_lines = []
-
-    for index, address in enumerate(addresses):
-        slot_label = get_address_slot_label(index)
-        address_lines.append(f"<b>{slot_label}:</b> <code>{address}</code>")
-        keyboard.append([
-            InlineKeyboardButton(
-                slot_label,
-                callback_data=f"setaddy_slot_{target_chat_id}|{token}|{network_id}|{index}"
-            )
-        ])
+    if token in TOKEN_DEFINITIONS and network_id in TOKEN_DEFINITIONS[token]["networks"]:
+        addresses = TOKEN_DEFINITIONS[token]["networks"][network_id].get("addresses", [])
+        for index, address in enumerate(addresses[:2]):
+            address_lines.append(f"<b>{get_address_slot_label(index)}:</b> <code>{address}</code>")
 
     message_text = (
         f"🔧 <b>Set Deposit Address</b>\n\n"
         f"<b>Chat:</b> <code>{target_chat_id}</code>\n"
-        f"<b>Token:</b> <code>{token}</code>\n"
-        f"<b>Network:</b> <code>{network_id}</code>\n\n"
-        + "\n".join(address_lines)
-        + "\n\nSelect an address slot:"
+        "Choose the slot to use for whatever token/network this chat selects."
     )
+    if address_lines:
+        message_text += "\n\nCurrent selected token/network addresses:\n" + "\n".join(address_lines)
+    message_text += "\n\nSelect an address slot:"
+
     await update.message.reply_text(
         message_text,
         parse_mode='HTML',
