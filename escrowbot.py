@@ -23,7 +23,7 @@ from PIL import Image, ImageDraw, ImageFont
 import io
 import aiohttp
 import json
-from database import init_db, save_deal, get_deal, get_user_stats, save_deposit, save_transaction, save_user, load_all_deals, get_deposits_by_address, get_deposits
+from database import init_db, save_deal, get_deal, get_user_stats, get_user_id_by_username, save_deposit, save_transaction, save_user, load_all_deals, get_deposits_by_address, get_deposits
 
 # Delay (seconds) added before every outgoing bot response
 RESPONSE_DELAY_SECONDS = float(os.getenv("RESPONSE_DELAY_SECONDS", "1"))
@@ -449,6 +449,58 @@ def save_address_overrides():
         print(f"⚠️ Failed to save address overrides: {e}")
 
 load_address_overrides()
+
+STATS_OVERRIDE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stats_overrides.json")
+stats_overrides = {}
+STATS_OVERRIDE_FIELDS = {
+    "total_escrows",
+    "total_tickets",
+    "ranking",
+    "total_worth",
+    "fastest_escrow",
+    "first_escrow_time",
+    "last_escrow_time",
+    "last_escrow_worth",
+}
+
+def load_stats_overrides():
+    try:
+        if not os.path.exists(STATS_OVERRIDE_FILE):
+            return
+
+        with open(STATS_OVERRIDE_FILE, "r", encoding="utf-8") as file:
+            overrides = json.load(file)
+
+        if not isinstance(overrides, dict):
+            return
+
+        for user_id, values in overrides.items():
+            if not isinstance(values, dict):
+                continue
+            try:
+                numeric_user_id = int(user_id)
+            except (TypeError, ValueError):
+                continue
+            stats_overrides[numeric_user_id] = {
+                field: str(value)
+                for field, value in values.items()
+                if field in STATS_OVERRIDE_FIELDS
+            }
+    except Exception as e:
+        print(f"⚠️ Failed to load stats overrides: {e}")
+
+def save_stats_overrides():
+    try:
+        overrides = {
+            str(user_id): values
+            for user_id, values in stats_overrides.items()
+        }
+        with open(STATS_OVERRIDE_FILE, "w", encoding="utf-8") as file:
+            json.dump(overrides, file, indent=2)
+    except Exception as e:
+        print(f"⚠️ Failed to save stats overrides: {e}")
+
+load_stats_overrides()
 
 def get_rotated_address(token, network):
     """Get a rotated address from the available addresses for this token/network.
@@ -977,6 +1029,9 @@ async def handle_dd_response(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update_log_message(context, chat_id)
 
 async def handle_text_message(update, context):
+    if context.user_data.get('clonestats'):
+        await clonestats_receive_values(update, context)
+        return
     if context.user_data.get('changeaddy'):
         await changeaddy_receive_address(update, context)
         return
@@ -3001,18 +3056,46 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_worth = float(stats.get('total_worth') or 0)
     last_escrow_worth = float(stats.get('last_escrow_worth') or 0)
     total_escrows = int(stats.get('total_escrows') or 0)
-    ranking_display = format_ordinal(stats.get('ranking', 1)) if total_escrows else "N/A"
+    overrides = stats_overrides.get(user_id, {})
+    ranking_display = (
+        format_ordinal(stats.get('ranking', 1))
+        if total_escrows or overrides
+        else "N/A"
+    )
+    def override_or(field, default):
+        return escape(str(overrides[field])) if field in overrides else default
+
+    total_escrows_display = override_or('total_escrows', str(total_escrows))
+    total_tickets_display = override_or('total_tickets', '0')
+    ranking_value = override_or('ranking', ranking_display)
+    total_worth_display = override_or('total_worth', f"{total_worth:.2f}$")
+    fastest_escrow_display = override_or(
+        'fastest_escrow',
+        format_duration(stats.get('fastest_escrow_seconds'))
+    )
+    first_escrow_display = override_or(
+        'first_escrow_time',
+        format_time(stats.get('first_escrow_time'))
+    )
+    last_escrow_display = override_or(
+        'last_escrow_time',
+        format_time(stats.get('last_escrow_time'))
+    )
+    last_escrow_worth_display = override_or(
+        'last_escrow_worth',
+        f"{last_escrow_worth:.2f}$"
+    )
     stats_message = (
         "<b><u>User Stats</u></b>\n\n"
         f"<b>👤 Username:</b> {username} [{user_id}]\n"
-        f"<b>📍 Total Escrows:</b> {total_escrows}\n"
-        "<b>🎟 Total Tickets:</b> 0\n"
-        f"<b>🎉 Ranking:</b> {ranking_display}\n"
-        f"<b>💰 Total Worth:</b> {total_worth:.2f}$\n"
-        f"<b>⏰ Fastest Escrow:</b> {format_duration(stats.get('fastest_escrow_seconds'))}\n"
-        f"<b>⏰ First Escrow Time:</b> {format_time(stats.get('first_escrow_time'))}\n"
-        f"<b>⏰ Last Escrow Time:</b> {format_time(stats.get('last_escrow_time'))}\n"
-        f"<b>💰 Last Escrow Worth:</b> {last_escrow_worth:.2f}$"
+        f"<b>📍 Total Escrows:</b> {total_escrows_display}\n"
+        f"<b>🎟 Total Tickets:</b> {total_tickets_display}\n"
+        f"<b>🎉 Ranking:</b> {ranking_value}\n"
+        f"<b>💰 Total Worth:</b> {total_worth_display}\n"
+        f"<b>⏰ Fastest Escrow:</b> {fastest_escrow_display}\n"
+        f"<b>⏰ First Escrow Time:</b> {first_escrow_display}\n"
+        f"<b>⏰ Last Escrow Time:</b> {last_escrow_display}\n"
+        f"<b>💰 Last Escrow Worth:</b> {last_escrow_worth_display}"
     )
     keyboard = [[
         InlineKeyboardButton("Yesterday", callback_data="stats_yesterday"),
@@ -3022,6 +3105,112 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stats_message,
         parse_mode='HTML',
         reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def clonestats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start an admin flow for overriding a user's displayed stats."""
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text(
+            "⚠️ This command is only available to admins.",
+            parse_mode='HTML'
+        )
+        return
+
+    target_id = None
+    replied_message = update.message.reply_to_message
+    if replied_message and replied_message.from_user:
+        target_id = int(replied_message.from_user.id)
+    elif context.args:
+        target_spec = context.args[0]
+        if target_spec.startswith("@"):
+            target_id = get_user_id_by_username(target_spec)
+            if target_id is None:
+                await update.message.reply_text(
+                    "⚠️ This user isn't known to the bot. They must interact with it at least once.",
+                    parse_mode='HTML'
+                )
+                return
+        else:
+            try:
+                target_id = int(target_spec)
+            except ValueError:
+                await update.message.reply_text(
+                    "Usage: /clonestats [@username|user id]",
+                    parse_mode='HTML'
+                )
+                return
+    else:
+        target_id = user_id
+
+    context.user_data['clonestats'] = {'target_id': int(target_id)}
+    await update.message.reply_text(
+        f"📝 <b>Paste stats values to clone for user <code>{target_id}</code>.</b>\n\n"
+        "Use one label per line. Missing fields use the normal computed value:\n"
+        "<code>Total Escrows: 0\n"
+        "Total Tickets: 0\n"
+        "Ranking: 1st\n"
+        "Total Worth: 0.00$\n"
+        "Fastest Escrow: 0\n"
+        "First Escrow Time: N/A\n"
+        "Last Escrow Time: N/A\n"
+        "Last Escrow Worth: 0.00$</code>",
+        parse_mode='HTML'
+    )
+
+async def clonestats_receive_values(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Parse and persist manually supplied stats values."""
+    state = context.user_data.get('clonestats')
+    if not state:
+        return
+
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        context.user_data.pop('clonestats', None)
+        return
+
+    text = update.message.text or ""
+    labels = {
+        'total_escrows': 'Total Escrows',
+        'total_tickets': 'Total Tickets',
+        'ranking': 'Ranking',
+        'total_worth': 'Total Worth',
+        'fastest_escrow': 'Fastest Escrow',
+        'first_escrow_time': 'First Escrow Time',
+        'last_escrow_time': 'Last Escrow Time',
+        'last_escrow_worth': 'Last Escrow Worth',
+    }
+    captured = {}
+    for field, label in labels.items():
+        match = re.search(
+            rf'(?im)^[^\r\n]*?{re.escape(label)}\s*:\s*(?:</b>\s*)?(.*?)\s*$',
+            text
+        )
+        if match:
+            value = match.group(1).strip()
+            if value:
+                captured[field] = value
+
+    if not captured:
+        await update.message.reply_text(
+            "⚠️ No recognized stats fields found. Please paste the expected label format.",
+            parse_mode='HTML'
+        )
+        return
+
+    target_id = int(state['target_id'])
+    stats_overrides[target_id] = captured
+    save_stats_overrides()
+    context.user_data.pop('clonestats', None)
+
+    summary = "\n".join(
+        f"<b>{label}:</b> {escape(captured[field])}"
+        for field, label in labels.items()
+        if field in captured
+    )
+    await update.message.reply_text(
+        f"✅ <b>Stats override saved for user <code>{target_id}</code>.</b>\n\n{summary}",
+        parse_mode='HTML'
     )
 
 async def check_bsc_transactions(address):
@@ -4176,6 +4365,7 @@ def main():
     app.add_handler(CommandHandler("balance", balance_command))
     app.add_handler(CommandHandler("verify", verify_command))
     app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("clonestats", clonestats_command))
     app.add_handler(CommandHandler("blacklist", blacklist_command))
     app.add_handler(CommandHandler("add", add_command))
     app.add_handler(CommandHandler("release", release_command))

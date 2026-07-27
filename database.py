@@ -464,6 +464,32 @@ def save_user(user_id, user_data):
         print(f"❌ Error saving user: {e}")
         return False
 
+def get_user_id_by_username(username):
+    """Look up a known user's numeric ID by username."""
+    conn = get_db_connection()
+    if not conn:
+        return None
+
+    try:
+        username = username.lstrip("@")
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT user_id FROM users WHERE LOWER(username) = LOWER(%s) LIMIT 1",
+            (username,)
+        )
+        result = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        return int(result[0]) if result else None
+    except Exception as e:
+        print(f"❌ Error retrieving user by username: {e}")
+        try:
+            cursor.close()
+            conn.close()
+        except Exception:
+            pass
+        return None
+
 def load_all_deals():
     """Load all deals from database"""
     conn = get_db_connection()
