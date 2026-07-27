@@ -17,12 +17,13 @@ import asyncio
 import random
 import re
 from datetime import datetime, timedelta
+from html import escape
 import pytz
 from PIL import Image, ImageDraw, ImageFont
 import io
 import aiohttp
 import json
-from database import init_db, save_deal, get_deal, save_deposit, save_transaction, save_user, load_all_deals, get_deposits_by_address, get_deposits
+from database import init_db, save_deal, get_deal, get_user_stats, save_deposit, save_transaction, save_user, load_all_deals, get_deposits_by_address, get_deposits
 
 # Delay (seconds) added before every outgoing bot response
 RESPONSE_DELAY_SECONDS = float(os.getenv("RESPONSE_DELAY_SECONDS", "1"))
@@ -2931,6 +2932,74 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(balance_message, parse_mode='HTML')
 
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show aggregate escrow statistics for the requesting user."""
+    user = update.effective_user
+    user_id = user.id
+
+    try:
+        stats = get_user_stats(user_id) or {}
+    except Exception as e:
+        print(f"❌ Error preparing user stats: {e}")
+        stats = {}
+
+    username = f"@{user.username}" if user.username else (user.first_name or "Unknown")
+    username = escape(username)
+
+    def format_time(value):
+        if not value:
+            return "N/A"
+        try:
+            return value.strftime("%Y-%m-%d %H:%M UTC")
+        except Exception:
+            return escape(str(value))
+
+    def format_duration(seconds):
+        try:
+            total_seconds = max(0, int(round(float(seconds or 0))))
+        except (TypeError, ValueError):
+            total_seconds = 0
+        if total_seconds == 0:
+            return "0"
+
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        parts = []
+        if hours:
+            parts.append(f"{hours}h")
+        if minutes:
+            parts.append(f"{minutes}m")
+        if seconds:
+            parts.append(f"{seconds}s")
+        return " ".join(parts)
+
+    def format_ordinal(value):
+        try:
+            number = int(value or 1)
+        except (TypeError, ValueError):
+            number = 1
+        if 10 <= number % 100 <= 20:
+            suffix = "th"
+        else:
+            suffix = {1: "st", 2: "nd", 3: "rd"}.get(number % 10, "th")
+        return f"{number}{suffix}"
+
+    total_worth = float(stats.get('total_worth') or 0)
+    last_escrow_worth = float(stats.get('last_escrow_worth') or 0)
+    stats_message = (
+        "<b><u>User Stats</u></b>\n\n"
+        f"<b>👤 Username:</b> {username} [{user_id}]\n"
+        f"<b>📍 Total Escrows:</b> {int(stats.get('total_escrows') or 0)}\n"
+        "<b>🎟 Total Tickets:</b> 0\n"
+        f"<b>🎉 Ranking:</b> {format_ordinal(stats.get('ranking', 1))}\n"
+        f"<b>💰 Total Worth:</b> {total_worth:.2f}$\n"
+        f"<b>⏰ Fastest Escrow:</b> {format_duration(stats.get('fastest_escrow_seconds'))}\n"
+        f"<b>⏰ First Escrow Time:</b> {format_time(stats.get('first_escrow_time'))}\n"
+        f"<b>⏰ Last Escrow Time:</b> {format_time(stats.get('last_escrow_time'))}\n"
+        f"<b>💰 Last Escrow Worth:</b> {last_escrow_worth:.2f}$"
+    )
+    await update.message.reply_text(stats_message, parse_mode='HTML')
+
 async def check_bsc_transactions(address):
     """Check BSC USDT transactions for an address"""
     if not BSCSCAN_API_KEY:
@@ -4082,6 +4151,7 @@ def main():
     app.add_handler(CommandHandler("deposit", deposit_command))
     app.add_handler(CommandHandler("balance", balance_command))
     app.add_handler(CommandHandler("verify", verify_command))
+    app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("blacklist", blacklist_command))
     app.add_handler(CommandHandler("add", add_command))
     app.add_handler(CommandHandler("release", release_command))

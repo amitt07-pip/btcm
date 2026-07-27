@@ -43,6 +43,7 @@ def main():
     app.add_handler(CommandHandler("deposit", escrow_bot.deposit_command))
     app.add_handler(CommandHandler("balance", escrow_bot.balance_command))
     app.add_handler(CommandHandler("verify", escrow_bot.verify_command))
+    app.add_handler(CommandHandler("stats", escrow_bot.stats_command))
     app.add_handler(CommandHandler("refund", escrow_bot.refund_command))
     app.add_handler(CommandHandler("release", escrow_bot.release_command))
     app.add_handler(CommandHandler("fakedepo", escrow_bot.fakedepo_command))

@@ -182,6 +182,122 @@ def get_deal(chat_id):
         print(f"❌ Error retrieving deal: {e}")
         return None
 
+def get_user_stats(user_id):
+    """Retrieve aggregate escrow statistics for a user."""
+    default_stats = {
+        'total_escrows': 0,
+        'total_tickets': 0,
+        'ranking': 1,
+        'total_worth': 0.0,
+        'fastest_escrow_seconds': 0,
+        'first_escrow_time': None,
+        'last_escrow_time': None,
+        'last_escrow_worth': 0.0,
+    }
+
+    conn = get_db_connection()
+    if not conn:
+        return default_stats
+
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("""
+            SELECT
+                COUNT(*) FILTER (WHERE completed = TRUE) AS total_escrows,
+                MIN(created_at) AS first_escrow_time,
+                MAX(created_at) AS last_escrow_time,
+                MIN(
+                    CASE
+                        WHEN completed = TRUE
+                        THEN EXTRACT(EPOCH FROM (updated_at - created_at))
+                    END
+                ) AS fastest_escrow_seconds
+            FROM deals
+            WHERE buyer_user_id = %s OR seller_user_id = %s
+        """, (user_id, user_id))
+        aggregate = cursor.fetchone() or {}
+
+        cursor.execute("""
+            WITH participant_deals AS (
+                SELECT buyer_user_id AS user_id, chat_id
+                FROM deals
+                WHERE completed = TRUE AND buyer_user_id IS NOT NULL
+                UNION
+                SELECT seller_user_id AS user_id, chat_id
+                FROM deals
+                WHERE completed = TRUE AND seller_user_id IS NOT NULL
+            ),
+            completed_counts AS (
+                SELECT user_id, COUNT(*) AS completed_count
+                FROM participant_deals
+                GROUP BY user_id
+            )
+            SELECT
+                1 + COUNT(*) FILTER (
+                    WHERE completed_count > COALESCE(
+                        (SELECT completed_count FROM completed_counts WHERE user_id = %s),
+                        0
+                    )
+                ) AS ranking
+            FROM completed_counts
+        """, (user_id,))
+        ranking_row = cursor.fetchone() or {}
+
+        cursor.execute("""
+            SELECT COALESCE(SUM(COALESCE(latest_deposit.balance, 0)), 0) AS total_worth
+            FROM deals
+            LEFT JOIN LATERAL (
+                SELECT balance
+                FROM deposits
+                WHERE deposits.chat_id = deals.chat_id
+                ORDER BY deposit_time DESC, id DESC
+                LIMIT 1
+            ) AS latest_deposit ON TRUE
+            WHERE deals.buyer_user_id = %s OR deals.seller_user_id = %s
+        """, (user_id, user_id))
+        worth_row = cursor.fetchone() or {}
+
+        cursor.execute("""
+            SELECT COALESCE(latest_deposit.balance, 0) AS last_escrow_worth
+            FROM deals
+            LEFT JOIN LATERAL (
+                SELECT balance
+                FROM deposits
+                WHERE deposits.chat_id = deals.chat_id
+                ORDER BY deposit_time DESC, id DESC
+                LIMIT 1
+            ) AS latest_deposit ON TRUE
+            WHERE deals.buyer_user_id = %s OR deals.seller_user_id = %s
+            ORDER BY deals.created_at DESC, deals.chat_id DESC
+            LIMIT 1
+        """, (user_id, user_id))
+        last_worth_row = cursor.fetchone() or {}
+
+        cursor.close()
+        conn.close()
+
+        stats = default_stats.copy()
+        stats['total_escrows'] = int(aggregate.get('total_escrows') or 0)
+        stats['ranking'] = int(ranking_row.get('ranking') or 1)
+        stats['total_worth'] = float(worth_row.get('total_worth') or 0)
+        stats['fastest_escrow_seconds'] = float(
+            aggregate.get('fastest_escrow_seconds') or 0
+        )
+        stats['first_escrow_time'] = aggregate.get('first_escrow_time')
+        stats['last_escrow_time'] = aggregate.get('last_escrow_time')
+        stats['last_escrow_worth'] = float(
+            last_worth_row.get('last_escrow_worth') or 0
+        )
+        return stats
+    except Exception as e:
+        print(f"❌ Error retrieving user stats: {e}")
+        try:
+            cursor.close()
+            conn.close()
+        except Exception:
+            pass
+        return default_stats
+
 def save_deposit(chat_id, deposit_data):
     """Save deposit record"""
     conn = get_db_connection()
