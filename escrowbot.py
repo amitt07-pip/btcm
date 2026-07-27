@@ -3000,12 +3000,14 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     total_worth = float(stats.get('total_worth') or 0)
     last_escrow_worth = float(stats.get('last_escrow_worth') or 0)
+    total_escrows = int(stats.get('total_escrows') or 0)
+    ranking_display = format_ordinal(stats.get('ranking', 1)) if total_escrows else "N/A"
     stats_message = (
         "<b><u>User Stats</u></b>\n\n"
         f"<b>👤 Username:</b> {username} [{user_id}]\n"
-        f"<b>📍 Total Escrows:</b> {int(stats.get('total_escrows') or 0)}\n"
+        f"<b>📍 Total Escrows:</b> {total_escrows}\n"
         "<b>🎟 Total Tickets:</b> 0\n"
-        f"<b>🎉 Ranking:</b> {format_ordinal(stats.get('ranking', 1))}\n"
+        f"<b>🎉 Ranking:</b> {ranking_display}\n"
         f"<b>💰 Total Worth:</b> {total_worth:.2f}$\n"
         f"<b>⏰ Fastest Escrow:</b> {format_duration(stats.get('fastest_escrow_seconds'))}\n"
         f"<b>⏰ First Escrow Time:</b> {format_time(stats.get('first_escrow_time'))}\n"
