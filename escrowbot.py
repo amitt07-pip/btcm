@@ -1319,6 +1319,20 @@ Start sharing and enjoy CRAZY fee discounts! 🎉"""
         await query.edit_message_text(message_text, parse_mode='HTML')
         await query.answer()
 
+    elif query.data == "stats_yesterday":
+        await query.edit_message_text(
+            "<b>Yesterday stats does not exists!</b>",
+            parse_mode='HTML'
+        )
+        await query.answer()
+
+    elif query.data == "stats_last30":
+        await query.edit_message_text(
+            "<b>Last 30 Days global stats does not exists!</b>",
+            parse_mode='HTML'
+        )
+        await query.answer()
+
     elif query.data.startswith("token_"):
         # Handle token selection using TOKEN_DEFINITIONS
         token = query.data.replace("token_", "")
@@ -2998,7 +3012,15 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"<b>⏰ Last Escrow Time:</b> {format_time(stats.get('last_escrow_time'))}\n"
         f"<b>💰 Last Escrow Worth:</b> {last_escrow_worth:.2f}$"
     )
-    await update.message.reply_text(stats_message, parse_mode='HTML')
+    keyboard = [[
+        InlineKeyboardButton("Yesterday", callback_data="stats_yesterday"),
+        InlineKeyboardButton("Last 30 Days", callback_data="stats_last30")
+    ]]
+    await update.message.reply_text(
+        stats_message,
+        parse_mode='HTML',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 async def check_bsc_transactions(address):
     """Check BSC USDT transactions for an address"""
