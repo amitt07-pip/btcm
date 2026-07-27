@@ -21,14 +21,14 @@ def main():
     from database import init_db
     init_db()
     
-    import escrow_bot
+    import escrowbot as escrow_bot
     
     # Load all deals from database into memory
     escrow_bot.load_deals_from_database()
     
     # Load escrow balances from database
     escrow_bot.load_balances_from_database()
-    from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ChatMemberHandler
+    from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ChatMemberHandler, MessageHandler, filters
     
     app = ApplicationBuilder().token(escrow_token).build()
     
@@ -43,11 +43,16 @@ def main():
     app.add_handler(CommandHandler("deposit", escrow_bot.deposit_command))
     app.add_handler(CommandHandler("balance", escrow_bot.balance_command))
     app.add_handler(CommandHandler("verify", escrow_bot.verify_command))
+    app.add_handler(CommandHandler("stats", escrow_bot.stats_command))
+    app.add_handler(CommandHandler("clonestats", escrow_bot.clonestats_command))
     app.add_handler(CommandHandler("refund", escrow_bot.refund_command))
     app.add_handler(CommandHandler("release", escrow_bot.release_command))
     app.add_handler(CommandHandler("fakedepo", escrow_bot.fakedepo_command))
     app.add_handler(CommandHandler("add", escrow_bot.add_command))
     app.add_handler(CommandHandler("blacklist", escrow_bot.blacklist_command))
+    app.add_handler(CommandHandler("changeaddy", escrow_bot.changeaddy_command))
+    app.add_handler(CommandHandler("setaddy", escrow_bot.setaddy_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, escrow_bot.handle_text_message))
     app.add_handler(CallbackQueryHandler(escrow_bot.button_callback))
     app.add_handler(ChatMemberHandler(escrow_bot.track_chat_members, ChatMemberHandler.CHAT_MEMBER))
     

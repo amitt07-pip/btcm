@@ -4,7 +4,7 @@ if sys.version_info >= (3, 13):
     sys.modules["imghdr"] = types.ModuleType("imghdr")
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMemberUpdated
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, ChatMemberHandler
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, ChatMemberHandler, MessageHandler, filters
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import CreateChatRequest, ExportChatInviteRequest
@@ -15,13 +15,75 @@ import hashlib
 import base64
 import asyncio
 import random
+import re
 from datetime import datetime, timedelta
+from html import escape
 import pytz
 from PIL import Image, ImageDraw, ImageFont
 import io
 import aiohttp
 import json
-from database import init_db, save_deal, get_deal, save_deposit, save_transaction, save_user, load_all_deals, get_deposits_by_address, get_deposits
+from database import init_db, save_deal, get_deal, get_user_stats, get_user_id_by_username, save_deposit, save_transaction, save_user, load_all_deals, get_deposits_by_address, get_deposits
+
+# Delay (seconds) added before every outgoing bot response
+RESPONSE_DELAY_SECONDS = float(os.getenv("RESPONSE_DELAY_SECONDS", "1"))
+
+
+def _install_response_delay():
+    """Add a fixed delay before every message the bot sends/edits.
+
+    Wraps the outgoing methods on ExtBot once at import time, so it applies to
+    reply_text/reply_photo/edit_message_text everywhere (both entrypoints)
+    without touching each handler. Getter/action methods are left untouched.
+    """
+    if RESPONSE_DELAY_SECONDS <= 0:
+        return
+    try:
+        from telegram.ext import ExtBot
+    except Exception as e:
+        print(f"⚠ Could not install response delay: {e}")
+        return
+
+    method_names = [
+        "send_message",
+        "send_photo",
+        "send_document",
+        "send_media_group",
+        "send_animation",
+        "send_video",
+        "edit_message_text",
+        "edit_message_caption",
+        "edit_message_media",
+    ]
+
+    # Shared state so consecutive outgoing messages are spaced apart by at
+    # least RESPONSE_DELAY_SECONDS, regardless of which handler sends them.
+    state = {"last_send": 0.0, "lock": None}
+
+    def make_wrapper(orig):
+        async def wrapper(self, *args, **kwargs):
+            if state["lock"] is None:
+                state["lock"] = asyncio.Lock()
+            async with state["lock"]:
+                elapsed = asyncio.get_event_loop().time() - state["last_send"]
+                wait = RESPONSE_DELAY_SECONDS - elapsed
+                if wait > 0:
+                    await asyncio.sleep(wait)
+                try:
+                    return await orig(self, *args, **kwargs)
+                finally:
+                    state["last_send"] = asyncio.get_event_loop().time()
+        wrapper._response_delayed = True
+        return wrapper
+
+    for name in method_names:
+        original = getattr(ExtBot, name, None)
+        if original is None or getattr(original, "_response_delayed", False):
+            continue
+        setattr(ExtBot, name, make_wrapper(original))
+
+
+_install_response_delay()
 
 # Bot token from environment variable
 BOT_TOKEN = os.getenv("ESCROW_BOT_TOKEN", "")
@@ -89,8 +151,21 @@ if SESSION_STRING:
 ADMIN_IDS_STR = os.getenv("ADMIN_IDS", "7472359048,7880967664,8453993167,2001575810,5825027777,6864194951,8093808661,5229586098,7962772947")
 ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(",") if admin_id.strip()]
 
+# CEO user IDs (comma-separated). CEOs get every admin permission,
+# but are never auto-promoted when they join a group.
+CEO_IDS_STR = os.getenv("CEO_IDS", "6643621069")
+CEO_IDS = [int(ceo_id.strip()) for ceo_id in CEO_IDS_STR.split(",") if ceo_id.strip()]
+
+# Grant CEOs full admin permissions
+for _ceo_id in CEO_IDS:
+    if _ceo_id not in ADMIN_IDS:
+        ADMIN_IDS.append(_ceo_id)
+
 # Notification channel ID
 NOTIFICATION_CHANNEL_ID = -1003266978268
+
+# Deal-log channel ID (live-updating deal log)
+LOG_CHANNEL_ID = -1004433511813
 
 # Blockchain API keys
 BSCSCAN_API_KEY = os.getenv("BSCSCAN_API_KEY", "")
@@ -190,6 +265,7 @@ monitored_addresses = {}  # {address: {'chat_id': ..., 'network': ..., 'last_che
 
 # Track address rotation index for each token/network pair
 fake_deposit_addresses = {}  # {chat_id: {'BEP20': '0x...', 'TRC20': 'T...'}}
+chat_deposit_slot = {}  # {chat_id: slot_index}
 address_rotation_index = {}  # {token_network: index}
 
 # Token definitions with networks and addresses (with rotation support)
@@ -328,6 +404,104 @@ TOKEN_DEFINITIONS = {
     }
 }
 
+ADDRESS_OVERRIDE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "token_addresses.json")
+
+def get_address_slot_label(index):
+    if index == 0:
+        return "Amit"
+    if index == 1:
+        return "Other"
+    return f"Address {index + 1}"
+
+def load_address_overrides():
+    try:
+        if not os.path.exists(ADDRESS_OVERRIDE_FILE):
+            return
+
+        with open(ADDRESS_OVERRIDE_FILE, "r", encoding="utf-8") as file:
+            overrides = json.load(file)
+
+        for token, token_networks in overrides.items():
+            if token not in TOKEN_DEFINITIONS or not isinstance(token_networks, dict):
+                continue
+
+            for network, addresses in token_networks.items():
+                if network not in TOKEN_DEFINITIONS[token]["networks"] or not isinstance(addresses, list):
+                    continue
+
+                TOKEN_DEFINITIONS[token]["networks"][network]["addresses"] = addresses
+    except Exception as e:
+        print(f"⚠️ Failed to load address overrides: {e}")
+
+def save_address_overrides():
+    try:
+        overrides = {
+            token: {
+                network: network_data.get("addresses", [])
+                for network, network_data in token_data["networks"].items()
+            }
+            for token, token_data in TOKEN_DEFINITIONS.items()
+        }
+
+        with open(ADDRESS_OVERRIDE_FILE, "w", encoding="utf-8") as file:
+            json.dump(overrides, file, indent=2)
+    except Exception as e:
+        print(f"⚠️ Failed to save address overrides: {e}")
+
+load_address_overrides()
+
+STATS_OVERRIDE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stats_overrides.json")
+stats_overrides = {}
+STATS_OVERRIDE_FIELDS = {
+    "total_escrows",
+    "total_tickets",
+    "ranking",
+    "total_worth",
+    "fastest_escrow",
+    "first_escrow_time",
+    "last_escrow_time",
+    "last_escrow_worth",
+}
+
+def load_stats_overrides():
+    try:
+        if not os.path.exists(STATS_OVERRIDE_FILE):
+            return
+
+        with open(STATS_OVERRIDE_FILE, "r", encoding="utf-8") as file:
+            overrides = json.load(file)
+
+        if not isinstance(overrides, dict):
+            return
+
+        for user_id, values in overrides.items():
+            if not isinstance(values, dict):
+                continue
+            try:
+                numeric_user_id = int(user_id)
+            except (TypeError, ValueError):
+                continue
+            stats_overrides[numeric_user_id] = {
+                field: str(value)
+                for field, value in values.items()
+                if field in STATS_OVERRIDE_FIELDS
+            }
+    except Exception as e:
+        print(f"⚠️ Failed to load stats overrides: {e}")
+
+def save_stats_overrides():
+    try:
+        overrides = {
+            str(user_id): values
+            for user_id, values in stats_overrides.items()
+        }
+        with open(STATS_OVERRIDE_FILE, "w", encoding="utf-8") as file:
+            json.dump(overrides, file, indent=2)
+    except Exception as e:
+        print(f"⚠️ Failed to save stats overrides: {e}")
+
+load_stats_overrides()
+
 def get_rotated_address(token, network):
     """Get a rotated address from the available addresses for this token/network.
     Alternates between addresses in a round-robin fashion."""
@@ -404,11 +578,88 @@ async def send_channel_notification(context, chat_id):
     except Exception as e:
         print(f"Failed to send channel notification: {e}")
 
+
+def build_log_message(chat_id):
+    """Build the log message text from escrow_roles data"""
+    if chat_id not in escrow_roles:
+        return None
+
+    roles = escrow_roles[chat_id]
+
+    initiator = roles.get('log_initiator', 'N/A')
+    buyer_info = roles.get('buyer')
+    seller_info = roles.get('seller')
+    buyer_text = buyer_info['username'] if buyer_info else "Not Set"
+    seller_text = seller_info['username'] if seller_info else "Not Set"
+    deal_amount = roles.get('deal_amount', 'Not Set')
+    status = roles.get('log_status', 'Group Assigned')
+
+    msg = (
+        f"<b>NEW ESCROW DEAL CREATED</b>\n\n"
+        f"<b>🆔 Chat ID:</b> <code>{chat_id}</code>\n"
+        f"<b>👤 Initiated by:</b> {initiator}\n"
+        f"<b>🛒 Buyer:</b> {buyer_text}\n"
+        f"<b>🏪 Seller:</b> {seller_text}\n"
+        f"<b>💰 Deal Amount:</b> {deal_amount}\n"
+        f"<b>📦 Group Type:</b> P2P\n"
+        f"<b>📊 Current Status:</b> {status}"
+    )
+
+    total_deposit = roles.get('log_total_deposit')
+    if total_deposit is not None:
+        msg += f"\n\n<b>TOTAL DEPOSIT:</b> <code>{total_deposit}</code>"
+
+    return msg
+
+
+async def send_log_message(context, chat_id):
+    """Send the initial log message to the notification channel"""
+    try:
+        msg_text = build_log_message(chat_id)
+        if not msg_text:
+            return
+
+        sent = await context.bot.send_message(
+            chat_id=LOG_CHANNEL_ID,
+            text=msg_text,
+            parse_mode='HTML'
+        )
+        escrow_roles[chat_id]['log_message_id'] = sent.message_id
+        print(f"✅ Log message sent for chat {chat_id}")
+    except Exception as e:
+        print(f"Failed to send log message: {e}")
+
+
+async def update_log_message(context_or_bot, chat_id):
+    """Update the existing log message in the notification channel.
+    Accepts either a context object or a bot object directly."""
+    try:
+        if chat_id not in escrow_roles:
+            return
+
+        log_message_id = escrow_roles[chat_id].get('log_message_id')
+        if not log_message_id:
+            return
+
+        msg_text = build_log_message(chat_id)
+        if not msg_text:
+            return
+
+        bot = getattr(context_or_bot, 'bot', context_or_bot)
+        await bot.edit_message_text(
+            chat_id=LOG_CHANNEL_ID,
+            message_id=log_message_id,
+            text=msg_text,
+            parse_mode='HTML'
+        )
+    except Exception as e:
+        print(f"Failed to update log message: {e}")
+
 def generate_group_photo(buyer_username, seller_username):
     """Generate group photo with buyer and seller usernames"""
     try:
         # Open the new template image
-        img = Image.open("attached_assets/photo_4913955247265352489_x_1762874099369.jpg")
+        img = Image.open(os.path.join(os.path.dirname(__file__), "photo_4913955247265352489_x_1762874099369.jpg"))
         draw = ImageDraw.Draw(img)
         
         # Try to use fonts that match the template style (Impact-like bold)
@@ -499,7 +750,7 @@ async def escrow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from telethon.tl.functions.messages import ExportChatInviteRequest, UpdatePinnedMessageRequest
     from telethon.tl.types import ChatAdminRights
     
-    waiting_msg = await update.message.reply_text("**Creating a safe trading place for you please wait, please wait...**", parse_mode='Markdown')
+    waiting_msg = await update.message.reply_text("<b>Creating a safe trading place for you please wait, please wait...</b>", parse_mode='HTML')
     
     if not user_client:
         error_msg = "❌ Group creation is not configured. Please contact the bot administrator."
@@ -549,6 +800,9 @@ async def escrow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if bot_chat_id not in escrow_roles:
             escrow_roles[bot_chat_id] = {}
         escrow_roles[bot_chat_id]['transaction_id'] = random_number
+        initiator_username = f"@{user.username}" if user.username else user.first_name
+        escrow_roles[bot_chat_id]['log_initiator'] = initiator_username
+        escrow_roles[bot_chat_id]['log_status'] = "Group Assigned"
         
         # Small delay before promoting
         await asyncio.sleep(1)
@@ -623,9 +877,6 @@ async def escrow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             silent=True
         ))
         
-        # Leave the group
-        await user_client(LeaveChannelRequest(channel=channel_id))
-        
         # Small delay
         await asyncio.sleep(1)
         
@@ -657,6 +908,7 @@ async def escrow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Bot token posts the message with the copied link
         await waiting_msg.edit_text(success_message, parse_mode='HTML')
         print(f"✅ Link posted to user by bot token")
+        await send_log_message(context, bot_chat_id)
         
     except FloodWaitError as e:
         await waiting_msg.edit_text(f"⏳ Rate limit hit. Please wait {e.seconds} seconds and try again.")
@@ -749,7 +1001,41 @@ Conditions (if any) -</code>
 
 Remember without it disputes wouldn't be resolved. Once filled proceed with Specifications of the seller or buyer with /seller or /buyer <b>[CRYPTO ADDRESS]</b>"""
     
-    await update.message.reply_text(dd_message, parse_mode='HTML')
+    keyboard = [[InlineKeyboardButton("How To Use Bot ❔", url="https://t.me/Easy_Escorw_Bot?start=instructions")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(dd_message, parse_mode='HTML', reply_markup=reply_markup)
+
+async def handle_dd_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Capture Quantity from a filled /dd form response and update the log"""
+    if not update.message or not update.message.text:
+        return
+
+    chat_id = update.effective_chat.id
+    text = update.message.text
+
+    if chat_id not in escrow_roles:
+        return
+
+    # Already captured
+    if escrow_roles[chat_id].get('deal_amount') and escrow_roles[chat_id]['deal_amount'] != 'Not Set':
+        return
+
+    match = re.search(r'[Qq]uantity\s*[-:]\s*(.+)', text)
+    if match:
+        quantity = match.group(1).strip()
+        if quantity:
+            escrow_roles[chat_id]['deal_amount'] = quantity
+            await update_log_message(context, chat_id)
+
+async def handle_text_message(update, context):
+    if context.user_data.get('clonestats'):
+        await clonestats_receive_values(update, context)
+        return
+    if context.user_data.get('changeaddy'):
+        await changeaddy_receive_address(update, context)
+        return
+    await handle_dd_response(update, context)
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle button callbacks"""
@@ -902,6 +1188,206 @@ Start sharing and enjoy CRAZY fee discounts! 🎉"""
         
         await query.edit_message_text(invites_message, reply_markup=reply_markup)
     
+    elif query.data.startswith("changeaddy_token_"):
+        user_id = query.from_user.id
+        if user_id not in ADMIN_IDS:
+            await query.answer("⚠️ Admins only", show_alert=True)
+            return
+
+        token = query.data.replace("changeaddy_token_", "", 1)
+
+        if token not in TOKEN_DEFINITIONS:
+            await query.answer("⚠️ Invalid token selected!", show_alert=True)
+            return
+
+        networks = TOKEN_DEFINITIONS[token]["networks"]
+
+        if len(networks) == 1:
+            network_id = list(networks.keys())[0]
+            addresses = networks[network_id].get("addresses", [])
+            keyboard = []
+
+            for index, _ in enumerate(addresses):
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"Change {get_address_slot_label(index)}",
+                        callback_data=f"changeaddy_slot_{token}|{network_id}|{index}"
+                    )
+                ])
+
+            reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+
+            address_lines = []
+            for index, address in enumerate(addresses):
+                address_lines.append(
+                    f"<b>{get_address_slot_label(index)}:</b> <code>{address}</code>"
+                )
+
+            message_text = (
+                f"🔧 <b>Change Deposit Address</b>\n\n"
+                f"<b>Token:</b> <code>{token}</code>\n"
+                f"<b>Network:</b> <code>{network_id}</code>\n\n"
+                + "\n".join(address_lines)
+                + ("\n\nSelect an address slot to change." if keyboard else "\n\nNo address slots found for this network.")
+            )
+
+            await query.edit_message_text(message_text, parse_mode='HTML', reply_markup=reply_markup)
+            await query.answer()
+            return
+
+        keyboard = []
+        network_buttons = []
+        for network_id, network_data in networks.items():
+            network_buttons.append(
+                InlineKeyboardButton(
+                    network_data['label'].upper(),
+                    callback_data=f"changeaddy_net_{token}|{network_id}"
+                )
+            )
+            if len(network_buttons) == 2:
+                keyboard.append(network_buttons)
+                network_buttons = []
+
+        if network_buttons:
+            keyboard.append(network_buttons)
+
+        keyboard.append([InlineKeyboardButton("⬅ BACK", callback_data="back_to_start")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        message_text = (
+            f"🔧 <b>Change Deposit Address</b>\n\n"
+            f"<b>Token:</b> <code>{token}</code>\n\n"
+            f"Select a network:"
+        )
+        await query.edit_message_text(message_text, parse_mode='HTML', reply_markup=reply_markup)
+        await query.answer()
+
+    elif query.data.startswith("changeaddy_net_"):
+        user_id = query.from_user.id
+        if user_id not in ADMIN_IDS:
+            await query.answer("⚠️ Admins only", show_alert=True)
+            return
+
+        try:
+            data = query.data.replace("changeaddy_net_", "", 1)
+            token, network_id = data.split("|", 1)
+        except ValueError:
+            await query.answer("⚠️ Invalid selection!", show_alert=True)
+            return
+
+        if token not in TOKEN_DEFINITIONS or network_id not in TOKEN_DEFINITIONS[token]["networks"]:
+            await query.answer("⚠️ Invalid token or network selected!", show_alert=True)
+            return
+
+        addresses = TOKEN_DEFINITIONS[token]["networks"][network_id].get("addresses", [])
+        keyboard = []
+        address_lines = []
+
+        for index, address in enumerate(addresses):
+            slot_label = get_address_slot_label(index)
+            address_lines.append(f"<b>{slot_label}:</b> <code>{address}</code>")
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"Change {slot_label}",
+                    callback_data=f"changeaddy_slot_{token}|{network_id}|{index}"
+                )
+            ])
+
+        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+        message_text = (
+            f"🔧 <b>Change Deposit Address</b>\n\n"
+            f"<b>Token:</b> <code>{token}</code>\n"
+            f"<b>Network:</b> <code>{network_id}</code>\n\n"
+            + "\n".join(address_lines)
+            + "\n\nSelect an address slot to change."
+        )
+        await query.edit_message_text(message_text, parse_mode='HTML', reply_markup=reply_markup)
+        await query.answer()
+
+    elif query.data.startswith("changeaddy_slot_"):
+        user_id = query.from_user.id
+        if user_id not in ADMIN_IDS:
+            await query.answer("⚠️ Admins only", show_alert=True)
+            return
+
+        try:
+            data = query.data.replace("changeaddy_slot_", "", 1)
+            token, network_id, index_str = data.split("|", 2)
+            index = int(index_str)
+        except ValueError:
+            await query.answer("⚠️ Invalid selection!", show_alert=True)
+            return
+
+        if token not in TOKEN_DEFINITIONS or network_id not in TOKEN_DEFINITIONS[token]["networks"]:
+            await query.answer("⚠️ Invalid token or network selected!", show_alert=True)
+            return
+
+        addresses = TOKEN_DEFINITIONS[token]["networks"][network_id].get("addresses", [])
+        if index < 0 or index >= len(addresses):
+            await query.answer("⚠️ Invalid address slot!", show_alert=True)
+            return
+
+        context.user_data['changeaddy'] = {
+            'token': token,
+            'network': network_id,
+            'index': index
+        }
+
+        slot_label = get_address_slot_label(index)
+        current_address = addresses[index]
+        message_text = (
+            f"🔧 <b>Change Deposit Address</b>\n\n"
+            f"<b>Token:</b> <code>{token}</code>\n"
+            f"<b>Network:</b> <code>{network_id}</code>\n"
+            f"<b>Slot:</b> {slot_label}\n\n"
+            f"Current address:\n<code>{current_address}</code>\n\n"
+            f"Send the new address as a message."
+        )
+        await query.edit_message_text(message_text, parse_mode='HTML')
+        await query.answer()
+
+    elif query.data.startswith("setaddy_slot_"):
+        user_id = query.from_user.id
+        if user_id not in ADMIN_IDS:
+            await query.answer("⚠️ Admins only", show_alert=True)
+            return
+
+        try:
+            data = query.data.replace("setaddy_slot_", "", 1)
+            chat_id_str, index_str = data.split("|", 1)
+            target_chat_id = int(chat_id_str)
+            index = int(index_str)
+        except ValueError:
+            await query.answer("⚠️ Invalid address selection!", show_alert=True)
+            return
+
+        if index < 0:
+            await query.answer("⚠️ Invalid address slot!", show_alert=True)
+            return
+
+        chat_deposit_slot[target_chat_id] = index
+        slot_label = get_address_slot_label(index)
+        message_text = (
+            f"✅ <b>Deposit address slot fixed</b>\n\n"
+            f"<b>Chat:</b> <code>{target_chat_id}</code>\n"
+            f"<b>Slot:</b> {slot_label}"
+        )
+        await query.edit_message_text(message_text, parse_mode='HTML')
+        await query.answer()
+
+    elif query.data == "stats_yesterday":
+        await query.edit_message_text(
+            "<b>Yesterday stats does not exists!</b>",
+            parse_mode='HTML'
+        )
+        await query.answer()
+
+    elif query.data == "stats_last30":
+        await query.edit_message_text(
+            "<b>Last 30 Days global stats does not exists!</b>",
+            parse_mode='HTML'
+        )
+        await query.answer()
+
     elif query.data.startswith("token_"):
         # Handle token selection using TOKEN_DEFINITIONS
         token = query.data.replace("token_", "")
@@ -1155,6 +1641,8 @@ Start sharing and enjoy CRAZY fee discounts! 🎉"""
         
         await query.edit_message_text(final_message, parse_mode='HTML')
         await query.answer("✅ Escrow accepted!")
+        escrow_roles[chat_id]['log_status'] = "Token Selected"
+        await update_log_message(context, chat_id)
         
         # Use existing transaction ID (from group number) or generate new one
         transaction_id = escrow_roles[chat_id].get('transaction_id')
@@ -1317,8 +1805,11 @@ Start sharing and enjoy CRAZY fee discounts! 🎉"""
         except Exception as e:
             print(f"Error renaming group in buyer confirmation: {e}")
         
-        # Send channel notification if both buyer and seller are now confirmed
-        await send_channel_notification(context, chat_id)
+        if 'seller' in escrow_roles[chat_id]:
+            escrow_roles[chat_id]['log_status'] = "Buyer Address Set"
+        else:
+            escrow_roles[chat_id]['log_status'] = "Buyer Address Set — waiting for seller"
+        await update_log_message(context, chat_id)
         
         # Save buyer to database
         save_deal(chat_id, {
@@ -1335,6 +1826,14 @@ Start sharing and enjoy CRAZY fee discounts! 🎉"""
             'trade_start_time': escrow_roles[chat_id].get('trade_start_time'),
             'group_renamed': escrow_roles[chat_id].get('group_renamed')
         })
+        
+        # Once both buyer and seller have confirmed, prompt to select the token
+        if 'buyer' in escrow_roles[chat_id] and 'seller' in escrow_roles[chat_id]:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="<b>Use /token to Choose crypto.</b>",
+                parse_mode='HTML'
+            )
         
         await query.answer("✅ Buyer role confirmed!")
     
@@ -1431,8 +1930,11 @@ Start sharing and enjoy CRAZY fee discounts! 🎉"""
         except Exception as e:
             print(f"Error renaming group in seller confirmation: {e}")
         
-        # Send channel notification if both buyer and seller are now confirmed
-        await send_channel_notification(context, chat_id)
+        if 'buyer' in escrow_roles[chat_id]:
+            escrow_roles[chat_id]['log_status'] = "Seller Address Set"
+        else:
+            escrow_roles[chat_id]['log_status'] = "Seller Address Set — waiting for buyer"
+        await update_log_message(context, chat_id)
         
         # Save seller to database
         save_deal(chat_id, {
@@ -1449,6 +1951,14 @@ Start sharing and enjoy CRAZY fee discounts! 🎉"""
             'trade_start_time': escrow_roles[chat_id].get('trade_start_time'),
             'group_renamed': escrow_roles[chat_id].get('group_renamed')
         })
+        
+        # Once both buyer and seller have confirmed, prompt to select the token
+        if 'buyer' in escrow_roles[chat_id] and 'seller' in escrow_roles[chat_id]:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="<b>Use /token to Choose crypto.</b>",
+                parse_mode='HTML'
+            )
         
         await query.answer("✅ Seller role confirmed!")
     
@@ -2065,7 +2575,7 @@ async def buyer_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         help_message = "<code>/buyer [Your Crypto Address]</code>\n\n⛓️ <b>Chains Supported:</b> doge, bsc, ltc, sol, eth, tron, btc"
         
         try:
-            with open("attached_assets/photo_6316666496414845910_y_1762874545822.jpg", "rb") as photo:
+            with open(os.path.join(os.path.dirname(__file__), "photo_6316666496414845910_y.jpg"), "rb") as photo:
                 await update.message.reply_photo(
                     photo=photo,
                     caption=help_message,
@@ -2126,15 +2636,11 @@ Click the button below to confirm."""
     
     await update.message.reply_text(confirmation_message, parse_mode='HTML', reply_markup=reply_markup)
     
-    # Immediately send the next prompt (don't wait for confirmation)
+    # Prompt for the seller if not yet set. The "/token" message is only sent
+    # once both buyer and seller have confirmed (see confirm_buyer/confirm_seller).
     if 'seller' not in escrow_roles[chat_id]:
         await update.message.reply_text(
             "<b>Please set seller using /seller [DEPOSIT ADDRESS]</b>",
-            parse_mode='HTML'
-        )
-    else:
-        await update.message.reply_text(
-            "<b>Use /token to Choose crypto.</b>",
             parse_mode='HTML'
         )
 
@@ -2149,7 +2655,7 @@ async def seller_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         help_message = "<code>/seller [Your Crypto Address]</code>\n\n⛓️ <b>Chains Supported:</b> doge, bsc, ltc, sol, eth, tron, btc"
         
         try:
-            with open("attached_assets/photo_6314481552062090385_y_1762874602327.jpg", "rb") as photo:
+            with open(os.path.join(os.path.dirname(__file__), "photo_6314481552062090385_y.jpg"), "rb") as photo:
                 await update.message.reply_photo(
                     photo=photo,
                     caption=help_message,
@@ -2210,15 +2716,11 @@ Click the button below to confirm."""
     
     await update.message.reply_text(confirmation_message, parse_mode='HTML', reply_markup=reply_markup)
     
-    # Immediately send the next prompt (don't wait for confirmation)
+    # Prompt for the buyer if not yet set. The "/token" message is only sent
+    # once both buyer and seller have confirmed (see confirm_buyer/confirm_seller).
     if 'buyer' not in escrow_roles[chat_id]:
         await update.message.reply_text(
             "<b>Please set buyer using /buyer [DEPOSIT ADDRESS]</b>",
-            parse_mode='HTML'
-        )
-    else:
-        await update.message.reply_text(
-            "<b>Use /token to Choose crypto.</b>",
             parse_mode='HTML'
         )
 
@@ -2345,9 +2847,17 @@ async def deposit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if network in fake_addresses:
             escrow_address = fake_addresses[network]
     
-    # If no fake address, get rotated address from available pool
+    # If no fake address, resolve a fixed slot or get a rotated address
     if not escrow_address:
-        escrow_address = get_rotated_address(token, network)
+        addresses = TOKEN_DEFINITIONS[token]['networks'][network].get('addresses', [])
+        if chat_id in chat_deposit_slot:
+            slot = chat_deposit_slot[chat_id]
+            if slot < len(addresses):
+                escrow_address = addresses[slot]
+            elif addresses:
+                escrow_address = addresses[0]
+        if not escrow_address:
+            escrow_address = get_rotated_address(token, network)
         if not escrow_address:
             await update.message.reply_text("⚠️ No address available for this token/network.")
             return
@@ -2413,6 +2923,10 @@ Amount Recieved: <code>0.00000</code> [0.00$]
     # Store the deposit message ID for later refreshing
     escrow_roles[chat_id]['deposit_message_id'] = deposit_msg.message_id
     
+    last4 = escrow_address[-4:] if escrow_address else "????"
+    escrow_roles[chat_id]['log_status'] = f"Deposit Address Sent [{last4}]"
+    await update_log_message(context, chat_id)
+
     # Store the current time as last deposit time
     escrow_roles[chat_id]['last_deposit_time'] = datetime.now()
     
@@ -2486,6 +3000,218 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     balance_message = f"<b>Current Escrow Balance is: <code>{current_balance:.5f}</code>usdt <u>{current_balance:.2f}$</u></b>"
     
     await update.message.reply_text(balance_message, parse_mode='HTML')
+
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show aggregate escrow statistics for the requesting user."""
+    user = update.effective_user
+    user_id = user.id
+
+    try:
+        stats = get_user_stats(user_id) or {}
+    except Exception as e:
+        print(f"❌ Error preparing user stats: {e}")
+        stats = {}
+
+    username = f"@{user.username}" if user.username else (user.first_name or "Unknown")
+    username = escape(username)
+
+    def format_time(value):
+        if not value:
+            return "N/A"
+        try:
+            return value.strftime("%Y-%m-%d %H:%M UTC")
+        except Exception:
+            return escape(str(value))
+
+    def format_duration(seconds):
+        try:
+            total_seconds = max(0, int(round(float(seconds or 0))))
+        except (TypeError, ValueError):
+            total_seconds = 0
+        if total_seconds == 0:
+            return "0"
+
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        parts = []
+        if hours:
+            parts.append(f"{hours}h")
+        if minutes:
+            parts.append(f"{minutes}m")
+        if seconds:
+            parts.append(f"{seconds}s")
+        return " ".join(parts)
+
+    def format_ordinal(value):
+        try:
+            number = int(value or 1)
+        except (TypeError, ValueError):
+            number = 1
+        if 10 <= number % 100 <= 20:
+            suffix = "th"
+        else:
+            suffix = {1: "st", 2: "nd", 3: "rd"}.get(number % 10, "th")
+        return f"{number}{suffix}"
+
+    total_worth = float(stats.get('total_worth') or 0)
+    last_escrow_worth = float(stats.get('last_escrow_worth') or 0)
+    total_escrows = int(stats.get('total_escrows') or 0)
+    overrides = stats_overrides.get(user_id, {})
+    ranking_display = (
+        format_ordinal(stats.get('ranking', 1))
+        if total_escrows or overrides
+        else "N/A"
+    )
+    def override_or(field, default):
+        return escape(str(overrides[field])) if field in overrides else default
+
+    total_escrows_display = override_or('total_escrows', str(total_escrows))
+    total_tickets_display = override_or('total_tickets', '0')
+    ranking_value = override_or('ranking', ranking_display)
+    total_worth_display = override_or('total_worth', f"{total_worth:.2f}$")
+    fastest_escrow_display = override_or(
+        'fastest_escrow',
+        format_duration(stats.get('fastest_escrow_seconds'))
+    )
+    first_escrow_display = override_or(
+        'first_escrow_time',
+        format_time(stats.get('first_escrow_time'))
+    )
+    last_escrow_display = override_or(
+        'last_escrow_time',
+        format_time(stats.get('last_escrow_time'))
+    )
+    last_escrow_worth_display = override_or(
+        'last_escrow_worth',
+        f"{last_escrow_worth:.2f}$"
+    )
+    stats_message = (
+        "<b><u>User Stats</u></b>\n\n"
+        f"<b>👤 Username:</b> {username} [{user_id}]\n"
+        f"<b>📍 Total Escrows:</b> {total_escrows_display}\n"
+        f"<b>🎟 Total Tickets:</b> {total_tickets_display}\n"
+        f"<b>🎉 Ranking:</b> {ranking_value}\n"
+        f"<b>💰 Total Worth:</b> {total_worth_display}\n"
+        f"<b>⏰ Fastest Escrow:</b> {fastest_escrow_display}\n"
+        f"<b>⏰ First Escrow Time:</b> {first_escrow_display}\n"
+        f"<b>⏰ Last Escrow Time:</b> {last_escrow_display}\n"
+        f"<b>💰 Last Escrow Worth:</b> {last_escrow_worth_display}"
+    )
+    keyboard = [[
+        InlineKeyboardButton("Yesterday", callback_data="stats_yesterday"),
+        InlineKeyboardButton("Last 30 Days", callback_data="stats_last30")
+    ]]
+    await update.message.reply_text(
+        stats_message,
+        parse_mode='HTML',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def clonestats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start an admin flow for overriding a user's displayed stats."""
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text(
+            "⚠️ This command is only available to admins.",
+            parse_mode='HTML'
+        )
+        return
+
+    target_id = None
+    replied_message = update.message.reply_to_message
+    if replied_message and replied_message.from_user:
+        target_id = int(replied_message.from_user.id)
+    elif context.args:
+        target_spec = context.args[0]
+        if target_spec.startswith("@"):
+            target_id = get_user_id_by_username(target_spec)
+            if target_id is None:
+                await update.message.reply_text(
+                    "⚠️ This user isn't known to the bot. They must interact with it at least once.",
+                    parse_mode='HTML'
+                )
+                return
+        else:
+            try:
+                target_id = int(target_spec)
+            except ValueError:
+                await update.message.reply_text(
+                    "Usage: /clonestats [@username|user id]",
+                    parse_mode='HTML'
+                )
+                return
+    else:
+        target_id = user_id
+
+    context.user_data['clonestats'] = {'target_id': int(target_id)}
+    await update.message.reply_text(
+        f"📝 <b>Paste stats values to clone for user <code>{target_id}</code>.</b>\n\n"
+        "Use one label per line. Missing fields use the normal computed value:\n"
+        "<code>Total Escrows: 0\n"
+        "Total Tickets: 0\n"
+        "Ranking: 1st\n"
+        "Total Worth: 0.00$\n"
+        "Fastest Escrow: 0\n"
+        "First Escrow Time: N/A\n"
+        "Last Escrow Time: N/A\n"
+        "Last Escrow Worth: 0.00$</code>",
+        parse_mode='HTML'
+    )
+
+async def clonestats_receive_values(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Parse and persist manually supplied stats values."""
+    state = context.user_data.get('clonestats')
+    if not state:
+        return
+
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        context.user_data.pop('clonestats', None)
+        return
+
+    text = update.message.text or ""
+    labels = {
+        'total_escrows': 'Total Escrows',
+        'total_tickets': 'Total Tickets',
+        'ranking': 'Ranking',
+        'total_worth': 'Total Worth',
+        'fastest_escrow': 'Fastest Escrow',
+        'first_escrow_time': 'First Escrow Time',
+        'last_escrow_time': 'Last Escrow Time',
+        'last_escrow_worth': 'Last Escrow Worth',
+    }
+    captured = {}
+    for field, label in labels.items():
+        match = re.search(
+            rf'(?im)^[^\r\n]*?{re.escape(label)}\s*:\s*(?:</b>\s*)?(.*?)\s*$',
+            text
+        )
+        if match:
+            value = match.group(1).strip()
+            if value:
+                captured[field] = value
+
+    if not captured:
+        await update.message.reply_text(
+            "⚠️ No recognized stats fields found. Please paste the expected label format.",
+            parse_mode='HTML'
+        )
+        return
+
+    target_id = int(state['target_id'])
+    stats_overrides[target_id] = captured
+    save_stats_overrides()
+    context.user_data.pop('clonestats', None)
+
+    summary = "\n".join(
+        f"<b>{label}:</b> {escape(captured[field])}"
+        for field, label in labels.items()
+        if field in captured
+    )
+    await update.message.reply_text(
+        f"✅ <b>Stats override saved for user <code>{target_id}</code>.</b>\n\n{summary}",
+        parse_mode='HTML'
+    )
 
 async def check_bsc_transactions(address):
     """Check BSC USDT transactions for an address"""
@@ -2658,6 +3384,10 @@ async def monitor_deposits(bot_app):
                             reply_markup=reply_markup
                         )
                         print(f"✅ Deposit detected: {new_amount} {token_name} on {network} for chat {chat_id}")
+                        if chat_id in escrow_roles:
+                            escrow_roles[chat_id]['log_status'] = "Deposit Detected"
+                            escrow_roles[chat_id]['log_total_deposit'] = f"{total_received:.5f}"
+                            await update_log_message(bot_app.bot, chat_id)
                     except Exception as e:
                         print(f"Failed to send deposit notification: {e}")
         
@@ -3070,6 +3800,9 @@ For help: Hit /dispute to call an Administrator.</b>"""
     # Store the message ID for later editing
     escrow_roles[chat_id]['pending_refunds'][refund_id]['message_id'] = confirmation_msg.message_id
 
+    escrow_roles[chat_id]['log_status'] = "Refund Stage"
+    await update_log_message(context, chat_id)
+
 async def send_refund_completion_message(context, chat_id, refund_data):
     """Send refund completion message after 10 seconds (payment to seller)"""
     await asyncio.sleep(10)
@@ -3135,6 +3868,10 @@ Thank you for using @Easy_Escrow_Bot 🙌
             parse_mode='HTML',
             reply_markup=reply_markup
         )
+
+        if chat_id in escrow_roles:
+            escrow_roles[chat_id]['log_status'] = "Deal Refunded"
+            await update_log_message(context, chat_id)
     except Exception as e:
         print(f"❌ Error sending refund completion message: {e}")
 
@@ -3204,6 +3941,10 @@ Thank you for using @Easy_Escrow_Bot 🙌
             parse_mode='HTML',
             reply_markup=reply_markup
         )
+
+        if chat_id in escrow_roles:
+            escrow_roles[chat_id]['log_status'] = "Deal Completed"
+            await update_log_message(context, chat_id)
     except Exception as e:
         print(f"❌ Error sending release completion message: {e}")
 
@@ -3366,6 +4107,149 @@ For help: Hit /dispute to call an Administrator.</b>"""
     # Store the message ID for later editing
     escrow_roles[chat_id]['pending_releases'][release_id]['message_id'] = confirmation_msg.message_id
 
+    escrow_roles[chat_id]['log_status'] = "Release Stage"
+    await update_log_message(context, chat_id)
+
+
+async def changeaddy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text(
+            "⚠️ This command is only available to admins.",
+            parse_mode='HTML'
+        )
+        return
+
+    keyboard = []
+    token_buttons = []
+
+    for token in TOKEN_DEFINITIONS:
+        token_buttons.append(
+            InlineKeyboardButton(
+                token,
+                callback_data=f"changeaddy_token_{token}"
+            )
+        )
+        if len(token_buttons) == 2:
+            keyboard.append(token_buttons)
+            token_buttons = []
+
+    if token_buttons:
+        keyboard.append(token_buttons)
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "🔧 <b>Change Deposit Address</b>\n\nSelect a token:",
+        parse_mode='HTML',
+        reply_markup=reply_markup
+    )
+
+async def changeaddy_receive_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    state = context.user_data.get('changeaddy')
+    if not state:
+        return
+
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        context.user_data.pop('changeaddy', None)
+        return
+
+    new_address = update.message.text.strip()
+    if not new_address:
+        await update.message.reply_text("Please send a valid address.")
+        return
+
+    token = state.get('token')
+    network = state.get('network')
+    index = state.get('index')
+
+    if token not in TOKEN_DEFINITIONS or network not in TOKEN_DEFINITIONS[token]["networks"]:
+        context.user_data.pop('changeaddy', None)
+        await update.message.reply_text("⚠️ Unable to update address: token or network no longer exists.")
+        return
+
+    addresses = TOKEN_DEFINITIONS[token]["networks"][network].get("addresses", [])
+    if not isinstance(index, int) or index < 0 or index >= len(addresses):
+        context.user_data.pop('changeaddy', None)
+        await update.message.reply_text("⚠️ Unable to update address: invalid address slot.")
+        return
+
+    old_address = addresses[index]
+    TOKEN_DEFINITIONS[token]["networks"][network]["addresses"][index] = new_address
+    save_address_overrides()
+    context.user_data.pop('changeaddy', None)
+
+    slot_label = get_address_slot_label(index)
+    await update.message.reply_text(
+        f"✅ <b>Deposit address updated</b>\n\n"
+        f"<b>Token:</b> <code>{token}</code>\n"
+        f"<b>Network:</b> <code>{network}</code>\n"
+        f"<b>Slot:</b> {slot_label}\n\n"
+        f"<b>Old:</b> <code>{old_address}</code>\n"
+        f"<b>New:</b> <code>{new_address}</code>",
+        parse_mode='HTML'
+    )
+
+async def setaddy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text(
+            "⚠️ This command is only available to admins.",
+            parse_mode='HTML'
+        )
+        return
+
+    if len(context.args) != 1:
+        await update.message.reply_text(
+            "Usage: /setaddy [chat id]",
+            parse_mode='HTML'
+        )
+        return
+
+    try:
+        target_chat_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text(
+            "Usage: /setaddy [chat id]",
+            parse_mode='HTML'
+        )
+        return
+
+    keyboard = []
+    for index in range(2):
+        keyboard.append([
+            InlineKeyboardButton(
+                get_address_slot_label(index),
+                callback_data=f"setaddy_slot_{target_chat_id}|{index}"
+            )
+        ])
+
+    chat_roles = escrow_roles.get(target_chat_id)
+    token = chat_roles.get('selected_token') if chat_roles else None
+    network_id = chat_roles.get('selected_network') if chat_roles else None
+    address_lines = []
+    if token in TOKEN_DEFINITIONS and network_id in TOKEN_DEFINITIONS[token]["networks"]:
+        addresses = TOKEN_DEFINITIONS[token]["networks"][network_id].get("addresses", [])
+        for index, address in enumerate(addresses[:2]):
+            address_lines.append(f"<b>{get_address_slot_label(index)}:</b> <code>{address}</code>")
+
+    message_text = (
+        f"🔧 <b>Set Deposit Address</b>\n\n"
+        f"<b>Chat:</b> <code>{target_chat_id}</code>\n"
+        "Choose the slot to use for whatever token/network this chat selects."
+    )
+    if address_lines:
+        message_text += "\n\nCurrent selected token/network addresses:\n" + "\n".join(address_lines)
+    message_text += "\n\nSelect an address slot:"
+
+    await update.message.reply_text(
+        message_text,
+        parse_mode='HTML',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
 async def fakedepo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /fakedepo command - admin only, sets fixed addresses for a chat"""
     user_id = update.effective_user.id
@@ -3431,8 +4315,8 @@ async def track_chat_members(update: Update, context: ContextTypes.DEFAULT_TYPE)
         user_id = result.new_chat_member.user.id
         chat_id = result.chat.id
         
-        # Check if the user is in the admin list
-        if user_id in ADMIN_IDS:
+        # Check if the user is in the admin list (CEOs are never auto-promoted)
+        if user_id in ADMIN_IDS and user_id not in CEO_IDS:
             try:
                 # Promote the admin with full permissions
                 await context.bot.promote_chat_member(
@@ -3480,10 +4364,15 @@ def main():
     app.add_handler(CommandHandler("deposit", deposit_command))
     app.add_handler(CommandHandler("balance", balance_command))
     app.add_handler(CommandHandler("verify", verify_command))
+    app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("clonestats", clonestats_command))
     app.add_handler(CommandHandler("blacklist", blacklist_command))
     app.add_handler(CommandHandler("add", add_command))
     app.add_handler(CommandHandler("release", release_command))
     app.add_handler(CommandHandler("refund", refund_command))
+    app.add_handler(CommandHandler("changeaddy", changeaddy_command))
+    app.add_handler(CommandHandler("setaddy", setaddy_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
     app.add_handler(CallbackQueryHandler(button_callback))
     app.add_handler(ChatMemberHandler(track_chat_members, ChatMemberHandler.CHAT_MEMBER))
     
